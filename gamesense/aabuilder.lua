@@ -46,7 +46,7 @@ local references = {
 local menu = {
     browser = ui_new_listbox("AA", "Anti-aimbot angles", "Menu browser", {}),
 
-    conditions = ui_new_multiselect("AA", "Anti-aimbot angles", "Activation conditions", {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Dormant", "Round end"}),
+    conditions = ui_new_multiselect("AA", "Anti-aimbot angles", "Activation conditions", {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}),
     conditions_logic = ui_new_combobox("AA", "Anti-aimbot angles", "\nConditions logic", "And", "Or"),
     pitch = ui_new_combobox("AA", "Anti-aimbot angles", "Pitch", {"Off", "Default", "Down", "Up", "Random", "Minimal"}),
     yaw_base = ui_new_combobox("AA", "Anti-aimbot angles", "Yaw base", {"Local view", "At targets"}),
@@ -193,6 +193,7 @@ local function get_conditions(cmd, local_player)
     local flags = entity_get_prop(local_player, "m_fFlags")
     local on_ground = bit_band(flags, 1) == 1
     local duck_amount = entity_get_prop(local_player, "m_flDuckAmount")
+    local team_num = entity_get_prop(entity_get_player_resource(), "m_iTeam", local_player)
     local sim_time = toticks(entity_get_prop(local_player, "m_flSimulationTime"))
     local sim_diff = sim_time - last_sim_time
     last_sim_time = sim_time
@@ -229,6 +230,8 @@ local function get_conditions(cmd, local_player)
         ["Crouching"] = duck_amount >= 0.9,
         ["Doubletapping"] = ui_get(references[1].double_tap) and ui_get(references[1].double_tap_key) and cmd.chokedcommands <= ui_get(references[1].double_tap_lag),
         ["Defensive"] = sim_diff < 0,
+        ["Terrorist"] = team_num == 2,
+        ["Counter terrorist"] = team_num == 3,
         ["Dormant"] = #entity_get_players(true) == 0,
         ["Round end"] = entity_get_prop(entity_get_game_rules(), "m_iRoundWinStatus") ~= 0 and get_total_enemies() == 0
     }
@@ -540,9 +543,3 @@ local function init()
 end 
 
 init()
-
-return {
-    get_config = function()
-        return ui_get(menu.config)
-    end
-}
