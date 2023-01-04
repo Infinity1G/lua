@@ -1,6 +1,6 @@
 local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
 local globals_realtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.tickcount, globals.maxplayers
-local select, setmetatable, toticks, require, tostring = select, setmetatable, toticks, require, tostring
+local select, setmetatable, toticks, require, tostring, ipairs, pairs, type = select, setmetatable, toticks, require, tostring, ipairs, pairs, type
 local json_stringify, json_parse = json.stringify, json.parse
 local table_remove, table_insert = table.remove, table.insert
 local string_format, string_rep = string.format, string.rep
@@ -12,13 +12,14 @@ local database_read, database_write = database.read, database.write
 
 local vector = require("vector")
 
+local WHITE = string_format("\a%02x%02x%02x%02x", 255, 255, 255, 225)
 local GRAY = string_format("\a%02x%02x%02x%02x", 100, 100, 100, 225)
 local GREEN = string_format("\a%02x%02x%02x%02x", 175, 255, 175, 225)
 local RED = string_format("\a%02x%02x%02x%02x", 255, 175, 175, 225)
 local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
 
-local blocks = {}
 local screen = 0
+local blocks = {}
 local new_block = false
 local current_block = nil
 
@@ -50,14 +51,19 @@ local references = {
 
 local menu = {
     -- main screen (0)
-    browser = ui_new_listbox("AA", "Anti-aimbot angles", "browser", {}),
+    browser = ui_new_listbox("AA", "Anti-aimbot angles", "browser", blocks),
 
     new = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "New", function() end),
     edit = ui_new_button("AA", "Anti-aimbot angles", "Edit", function() end),
+    edit_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Edit", function() end),
     toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
+    toggle_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Toggle", function() end),
     move_up = ui_new_button("AA", "Anti-aimbot angles", "Move up", function() end),
+    move_up_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move up", function() end),
     move_down = ui_new_button("AA", "Anti-aimbot angles", "Move down", function() end),
+    move_down_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move down", function() end),
     delete = ui_new_button("AA", "Anti-aimbot angles", RED.. "Delete", function() end),
+    delete_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Delete", function() end),
 
     -- conditions editing screen (1)
     cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
@@ -110,7 +116,7 @@ do
 
         self.name = name or ""
         self.enabled = true
-        self.conditions = {"Always"}
+        self.conditions = {}
         self.cond_type = "AND"
         self.settings = {
             pitch = "Off",
@@ -223,7 +229,7 @@ local function update_browser()
     local display = {}
     local num = 1
     for i,v in ipairs(blocks) do
-        display[#display+1] = v.enabled and string_format("[%i] %s", num, v.name) or string_format("%s[  ] %s", GRAY, v.name)
+        display[#display+1] = v.enabled and string_format("%s[%i] %s%s", GRAY, num, WHITE, v.name) or string_format("%s[  ] %s", GRAY, v.name)
         num = v.enabled and num+1 or num
     end
 
@@ -238,7 +244,7 @@ local function update_cond_browser()
     local display = {}
 
     for _,v in ipairs(CONDITIONS) do
-        display[#display+1] = string_format("%s%s", includes(current_block.conditions, v) and "" or GRAY, v)
+        display[#display+1] = string_format("%s%s", includes(current_block.conditions, v) and WHITE or GRAY, v)
     end
 
     ui_update(menu.cond_browser, display)
@@ -268,10 +274,15 @@ local function update_visibility(s)
 
     set_table_visibility(menu.browser, menu.new, screen == 0)
     ui_set_visible(menu.edit, screen == 0 and browser)
+    ui_set_visible(menu.edit_inactive, screen == 0 and not browser)
     ui_set_visible(menu.toggle, screen == 0 and browser)
+    ui_set_visible(menu.toggle_inactive, screen == 0 and not browser)
     ui_set_visible(menu.move_up, screen == 0 and browser and browser > 0)
+    ui_set_visible(menu.move_up_inactive, screen == 0 and not (browser and browser > 0))
     ui_set_visible(menu.move_down, screen == 0 and browser and browser < #blocks-1)
+    ui_set_visible(menu.move_down_inactive, screen == 0 and not (browser and browser < #blocks-1))
     ui_set_visible(menu.delete, screen == 0 and browser and #blocks > 1)
+    ui_set_visible(menu.delete_inactive, screen == 0 and not (browser and #blocks > 1))
 
     set_table_visibility(menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.back, screen == 2)
 
