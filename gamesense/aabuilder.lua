@@ -1,7 +1,7 @@
 local ui_reference, ui_new_checkbox, ui_new_slider, ui_new_combobox, ui_new_multiselect, ui_new_listbox, ui_new_label, ui_new_hotkey, ui_new_textbox, ui_new_button, ui_new_string, ui_get, ui_set, ui_set_visible, ui_set_callback, ui_update, ui_is_menu_open = ui.reference, ui.new_checkbox, ui.new_slider, ui.new_combobox, ui.new_multiselect, ui.new_listbox, ui.new_label, ui.new_hotkey, ui.new_textbox, ui.new_button, ui.new_string, ui.get, ui.set, ui.set_visible, ui.set_callback, ui.update, ui.is_menu_open
-local client_set_event_callback, client_unset_event_callback, client_screen_size, client_userid_to_entindex,  client_current_threat, client_random_int = client.set_event_callback, client_unset_event_callback, client.screen_size, client.userid_to_entindex, client.current_threat, client.random_int
+local client_latency, client_set_event_callback, client_unset_event_callback, client_screen_size, client_userid_to_entindex, client_current_threat, client_random_int = client.latency, client.set_event_callback, client_unset_event_callback, client.screen_size, client.userid_to_entindex, client.current_threat, client.random_int
 local entity_get_players, entity_get_esp_data, entity_is_alive, entity_get_prop, entity_get_player_resource, entity_is_enemy, entity_get_game_rules, entity_get_local_player, entity_get_origin = entity.get_players, entity.get_esp_data, entity.is_alive, entity.get_prop, entity.get_player_resource, entity.is_enemy, entity.get_game_rules, entity.get_local_player, entity.get_origin
-local globals_maxplayers, globals_realtime, globals_curtime = globals.maxplayers, globals.realtime, globals.curtime
+local globals_maxplayers, globals_realtime, globals_curtime, globals_tickcount = globals.maxplayers, globals.realtime, globals.curtime, globals.tickcount
 local database_read, database_write  = database.read, database.write
 local json_parse, json_stringify = json.parse, json.stringify
 local bit_band, bit_lshift = bit.band, bit.lshift
@@ -46,7 +46,7 @@ local references = {
 local menu = {
     browser = ui_new_listbox("AA", "Anti-aimbot angles", "Menu browser", {}),
 
-    conditions = ui_new_multiselect("AA", "Anti-aimbot angles", "Activation conditions", {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}),
+    conditions = ui_new_multiselect("AA", "Anti-aimbot angles", "Activation conditions", {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}),
     conditions_logic = ui_new_combobox("AA", "Anti-aimbot angles", "\nConditions logic", "And", "Or"),
     pitch = ui_new_combobox("AA", "Anti-aimbot angles", "Pitch", {"Off", "Default", "Down", "Up", "Random", "Minimal"}),
     yaw_base = ui_new_combobox("AA", "Anti-aimbot angles", "Yaw base", {"Local view", "At targets"}),
@@ -78,6 +78,9 @@ local menu = {
 
     force_choke = ui_new_checkbox("AA", "Fake lag", "Force choke"),
     disable_on_round_end = ui_new_checkbox("AA", "Fake lag", "Disable on round end"),
+    disable_on_shot = ui_new_checkbox("AA", "Fake lag", "Disable on shot"),
+    force_defensive = ui_new_checkbox("AA", "Fake lag", "Force defensive"),
+    force_defensive_key = ui_new_hotkey("AA", "Fake lag", "Force defensive key", true),
 
     config = ui_new_string("Config save string", ""),
 }
@@ -164,15 +167,18 @@ local function update_menu()
     ui_set_visible(menu.fake_limit, has_block and ui_get(menu.body) ~= "Off")
 end
 
+local vulnerable_ticks = 0
 local function is_vulnerable()
     for _, v in ipairs(entity_get_players(true)) do
         local flags = (entity_get_esp_data(v)).flags
 
         if bit_band(flags, bit_lshift(1, 11)) ~= 0 then
+            vulnerable_ticks = vulnerable_ticks + 1
             return true
         end
     end
 
+    vulnerable_ticks = 0
     return false
 end
 
@@ -186,7 +192,22 @@ local function get_total_enemies()
     return count
 end
 
-local last_origin, last_sim_time, on_ground_ticks = vector(0,0,0), 0, 0
+local last_sim_time, defensive_until = 0, 0
+local function is_defensive_active(local_player)
+    local tickcount = globals_tickcount()
+    local sim_time = toticks(entity_get_prop(local_player, "m_flSimulationTime"))
+    local sim_diff = sim_time - last_sim_time
+
+    if sim_diff < 0 then
+        defensive_until = tickcount + math_abs(sim_diff) - toticks(client_latency())
+    end
+    
+    last_sim_time = sim_time
+
+    return defensive_until > tickcount
+end
+
+local last_origin, on_ground_ticks = vector(0,0,0), 0
 local function get_conditions(cmd, local_player)
     local velocity = {entity_get_prop(local_player, "m_vecVelocity")}
     local speed = math_sqrt(velocity[1] * velocity[1] + velocity[2] * velocity[2])
@@ -194,9 +215,6 @@ local function get_conditions(cmd, local_player)
     local on_ground = bit_band(flags, 1) == 1
     local duck_amount = entity_get_prop(local_player, "m_flDuckAmount")
     local team_num = entity_get_prop(entity_get_player_resource(), "m_iTeam", local_player)
-    local sim_time = toticks(entity_get_prop(local_player, "m_flSimulationTime"))
-    local sim_diff = sim_time - last_sim_time
-    last_sim_time = sim_time
     local origin = vector(entity_get_origin(local_player))
     local breaking_lc = (last_origin - origin):length2dsqr() > 4096
     local threat = client_current_threat()
@@ -222,6 +240,7 @@ local function get_conditions(cmd, local_player)
         ["Moving"] = speed >= 2,
         ["On ground"] = on_ground_ticks > 1,
         ["In air"] = on_ground_ticks <= 1,
+        ["On peek"] = vulnerable_ticks > 0 and vulnerable_ticks <= 14,
         ["Breaking LC"] = breaking_lc,
         ["Height advantage"] = threat and height_to_threat > 25,
         ["Height disadvantage"] = threat and height_to_threat < -25,
@@ -229,7 +248,7 @@ local function get_conditions(cmd, local_player)
         ["Not crouching"] = duck_amount < 0.9,
         ["Crouching"] = duck_amount >= 0.9,
         ["Doubletapping"] = ui_get(references[1].double_tap) and ui_get(references[1].double_tap_key) and cmd.chokedcommands <= ui_get(references[1].double_tap_lag),
-        ["Defensive"] = sim_diff < 0,
+        ["Defensive"] = is_defensive_active(local_player),
         ["Terrorist"] = team_num == 2,
         ["Counter terrorist"] = team_num == 3,
         ["Dormant"] = #entity_get_players(true) == 0,
@@ -332,6 +351,7 @@ do
         local conditions = self.conditions
         local num_conditions = #conditions
         local logic = self.conditions_logic
+        local num_required = logic == "And" and num_conditions or logic == "Or" and 1 or -1
 
         if logic == "And" then
             for i,condition in ipairs(conditions) do
@@ -379,12 +399,18 @@ local function run_antiaim(cmd, local_player, local_conditions)
     set_table_visibility(references[2], false)
 end
 
+local last_shot = 0
 local function run_fakelag(cmd, local_player, local_conditions)
     local flags = entity_get_prop(local_player, "m_fFlags")
     local on_ground = bit_band(flags, 1) == 1
     local no_choke = false
+    local round_end = local_conditions["Round end"]
 
-    if local_conditions["Round end"] and ui_get(menu.disable_on_round_end) then
+    if ui_get(menu.force_defensive) and ui_get(menu.force_defensive_key) and not round_end then
+        cmd.force_defensive = 1
+    end
+
+    if round_end and ui_get(menu.disable_on_round_end) or ui_get(menu.disable_on_shot) and globals_tickcount() - last_shot == 1 then
         cmd.no_choke = 1
         no_choke = true
     end
@@ -510,6 +536,14 @@ client_set_event_callback("setup_command", function(cmd)
     local local_conditions = get_conditions(cmd, local_player)
     run_antiaim(cmd, local_player, local_conditions)
     run_fakelag(cmd, local_player, local_conditions)
+end)
+
+client_set_event_callback("weapon_fire", function(e)
+    local local_player = entity_get_local_player()
+
+    if client_userid_to_entindex(e.userid) == local_player then
+        last_shot = globals_tickcount()
+    end
 end)
 
 client_set_event_callback("pre_config_save", save_config)
