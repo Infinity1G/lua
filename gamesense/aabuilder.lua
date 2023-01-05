@@ -16,6 +16,7 @@ local WHITE = string_format("\a%02x%02x%02x%02x", 255, 255, 255, 225)
 local LIGHTGRAY = string_format("\a%02x%02x%02x%02x", 175, 175, 175, 225)
 local GRAY = string_format("\a%02x%02x%02x%02x", 100, 100, 100, 225)
 local GREEN = string_format("\a%02x%02x%02x%02x", 175, 255, 175, 225)
+local YELLOW = string_format("\a%02x%02x%02x%02x", 255, 255, 150, 225)
 local RED = string_format("\a%02x%02x%02x%02x", 255, 175, 175, 225)
 local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
 local DESCRIPTIONS = {
@@ -40,6 +41,9 @@ local DESCRIPTIONS = {
     ["Round end"] = "The round is over and there are no enemies."
 }
 
+local custom_conditions = {}
+local custom_descriptions = {}
+local custom_funcs = {}
 local screen = 0
 local blocks = {}
 local new_block = false
@@ -88,12 +92,12 @@ local menu = {
 
     -- conditions editing screen (1)
     cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
-    cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", CONDITIONS),
+    cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", DEFAULT_CONDITIONS),
     cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
     save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
     back = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
-    desc1 = ui_new_label("AA", "Anti-aimbot angles", "[DESCRIPTION]"),
-    desc2 = ui_new_label("AA", "Anti-aimbot angles", "[DESCRIPTION]"),
+    desc1 = ui_new_label("AA", "Anti-aimbot angles", "Unknown."),
+    desc2 = ui_new_label("AA", "Anti-aimbot angles", "Unknown."),
 
     -- preset editing screen (2)
     name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
@@ -275,11 +279,19 @@ local function update_cond_browser()
         display[#display+1] = string_format("%s%s", includes(current_block.conditions, v) and WHITE or GRAY, v)
     end
 
+    for _,v in ipairs(custom_conditions) do
+        display[#display+1] = string_format("%s! %s%s", YELLOW, includes(current_block.conditions, v) and WHITE or GRAY, v)
+    end
+
     ui_update(menu.cond_browser, display)
 end
 
 local function update_cond_description(condition)
-    local description = condition.. ": ".. DESCRIPTIONS[condition] or "Unknown."
+    if not condition then
+        return
+    end
+
+    local description = condition.. ": ".. (DESCRIPTIONS[condition] or custom_descriptions[condition] or "Unknown.")
     local desc1, desc2 = "", ""
     local len = 0
     
@@ -410,7 +422,7 @@ local function get_conditions(cmd, local_player)
         height_to_threat = origin.z-threat_origin.z
     end
 
-    local conditions = {
+    local conds = {
         ["Always"] = true,
         ["Not moving"] = speed < 2,
         ["Slow motion"] = ui_get(references.slow_motion) and ui_get(references.slow_motion_key) and speed >= 2,
@@ -432,7 +444,11 @@ local function get_conditions(cmd, local_player)
         ["Round end"] = entity_get_prop(entity_get_game_rules(), "m_iRoundWinStatus") ~= 0 and get_total_enemies() == 0
     }
 
-    return conditions
+    for _,v in ipairs(custom_conditions) do
+        conds[v] = custom_funcs[v](local_player)
+    end
+
+    return conds
 end
 
 local function run_antiaim(local_conditions)
@@ -462,22 +478,41 @@ local function on_setup_command(cmd)
     run_antiaim(local_conditions)
 end
 
-local function load_config()
-    local cfg = json_parse(ui_get(menu.config))
-    current_block = nil
-    blocks = {}
+local function add_condition(name, desc, func)
+    name = tostring(name)
+    assert(#name > 0 and name ~= "nil", "The condition must have a name.")
+    assert(type(desc) == "string" and #desc > 0, "The condition must have a description.")
+    assert(type(func) == "function", "You must add a function to the condition.")
 
-    for i,v in ipairs(cfg) do
-        blocks[#blocks+1] = Block.to_block(v)
-    end
-
-    update_visibility(0)
-    set_references_visibility(false)
-    ui_set(menu.browser, 0)
+    custom_conditions[#custom_conditions+1] = name
+    custom_descriptions[name] = desc
+    custom_funcs[name] = func
 end
 
 local function save_config()
     ui_set(menu.config, tostring(json_stringify(blocks)))
+end
+
+local function load_config()
+    local json_cfg = ui_get(menu.config)
+    
+    if #json_cfg == 0 then
+        blocks[#blocks+1] = Block("Default", true)
+        save_config()
+    else
+        local cfg = json_parse(ui_get(menu.config)) or {}
+        current_block = nil
+        blocks = {}
+
+        for i,v in ipairs(cfg) do
+            blocks[#blocks+1] = Block.to_block(v)
+        end
+    end
+
+
+    update_visibility(0)
+    set_references_visibility(false)
+    ui_set(menu.browser, 0)
 end
 
 local function on_init()
@@ -501,7 +536,22 @@ local function on_init()
     ui_set_callback(menu.body, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.save, function() current_block:update(); if new_block then blocks[#blocks+1] = current_block end; current_block = nil; update_visibility(0) end)
     ui_set_callback(menu.back2, function() update_visibility(0) end)
-    ui_set_callback(menu.cond_toggle, function() current_block:toggle_condition(CONDITIONS[ui_get(menu.cond_browser)+1]); update_cond_browser() end)
+
+    ui_set_callback(menu.cond_toggle, function() 
+        if not current_block then
+            return
+        end
+
+        local idx = ui_get(menu.cond_browser) + 1
+
+        local all_conditions = {}
+        for _,v in ipairs(CONDITIONS) do all_conditions[#all_conditions+1] = v end
+        for _,v in ipairs(custom_conditions) do all_conditions[#all_conditions+1] = v end 
+
+        current_block:toggle_condition(all_conditions[idx]);
+        
+        update_cond_browser() 
+    end)
 
     ui_set_callback(menu.move_up, function()
         local idx = ui_get(menu.browser) + 1
@@ -538,6 +588,10 @@ local function on_init()
 
     local prev_cond_browser = {nil, nil}
     ui_set_callback(menu.cond_browser, function(self)
+        if not ui_get(self) then
+            return
+        end
+
         local idx = ui_get(self) + 1
         local realtime = globals_realtime()
 
@@ -545,22 +599,28 @@ local function on_init()
             ui_set(menu.cond_toggle, true)
         end
 
-        update_cond_description(CONDITIONS[idx])
+        local all_conditions = {}
+        for _,v in ipairs(CONDITIONS) do all_conditions[#all_conditions+1] = v end
+        for _,v in ipairs(custom_conditions) do all_conditions[#all_conditions+1] = v end 
+
+        update_cond_description(all_conditions[idx])
         prev_cond_browser = {idx, realtime}
     end)
-    
+
     local cache = database_read("new_aa_cache")
 
-    if cache and globals_realtime() - cache[1] < 0.1 then
+    if cache and globals_realtime() - cache[1] == 0 then
         for i,v in ipairs(cache[2]) do
             blocks[#blocks+1] = Block.to_block(v)
         end
     else
-        blocks[#blocks+1] = Block("Default", true)
+        load_config()
     end
-
+    
     set_references_visibility(false)
     update_visibility(0)
 end
 
 on_init()
+
+return add_condition
