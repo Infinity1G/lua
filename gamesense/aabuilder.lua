@@ -235,7 +235,7 @@ do
             if ref and k ~= "freestanding" then
                 ui_set(ref, v)
             elseif k == "freestanding" then
-                ui_set(ref, v == {"Default"} and ui_get(menu.freestanding_key) and {"Default"} or {"-"})
+                ui_set(ref, #v == 1 and ui_get(menu.freestanding_key) and "Default" or "")
             end
         end
 
