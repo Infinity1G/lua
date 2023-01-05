@@ -1,93 +1,123 @@
-local ui_reference, ui_new_checkbox, ui_new_slider, ui_new_combobox, ui_new_multiselect, ui_new_listbox, ui_new_label, ui_new_hotkey, ui_new_textbox, ui_new_button, ui_new_string, ui_get, ui_set, ui_set_visible, ui_set_callback, ui_update, ui_is_menu_open = ui.reference, ui.new_checkbox, ui.new_slider, ui.new_combobox, ui.new_multiselect, ui.new_listbox, ui.new_label, ui.new_hotkey, ui.new_textbox, ui.new_button, ui.new_string, ui.get, ui.set, ui.set_visible, ui.set_callback, ui.update, ui.is_menu_open
-local client_latency, client_set_event_callback, client_unset_event_callback, client_screen_size, client_userid_to_entindex, client_current_threat, client_random_int = client.latency, client.set_event_callback, client_unset_event_callback, client.screen_size, client.userid_to_entindex, client.current_threat, client.random_int
-local entity_get_players, entity_get_esp_data, entity_is_alive, entity_get_prop, entity_get_player_resource, entity_is_enemy, entity_get_game_rules, entity_get_local_player, entity_get_origin = entity.get_players, entity.get_esp_data, entity.is_alive, entity.get_prop, entity.get_player_resource, entity.is_enemy, entity.get_game_rules, entity.get_local_player, entity.get_origin
-local globals_maxplayers, globals_realtime, globals_curtime, globals_tickcount = globals.maxplayers, globals.realtime, globals.curtime, globals.tickcount
-local database_read, database_write  = database.read, database.write
-local json_parse, json_stringify = json.parse, json.stringify
+local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
+local globals_realtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.tickcount, globals.maxplayers
+local json_stringify, json_parse = json.stringify, json.parse
+local table_remove, table_insert = table.remove, table.insert
+local string_format, string_rep = string.format, string.rep
+local math_abs, math_sqrt = math.abs, math.sqrt
 local bit_band, bit_lshift = bit.band, bit.lshift
-local table_insert, table_remove = table.insert, table.remove
-local math_sqrt, math_cos, math_abs = math.sqrt, math.cos, math.abs
-local select, pairs, ipairs, tostring, setmetatable = select, pairs, ipairs, tostring, setmetatable
-local string_find, string_format = string.find, string.format
+local entity_get_local_player, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
+local client_set_event_callback, client_latency, client_current_threat = client.set_event_callback, client.latency, client.current_threat
+local database_read, database_write = database.read, database.write
+local select, setmetatable, toticks, require, tostring, ipairs, pairs, type = select, setmetatable, toticks, require, tostring, ipairs, pairs, type
 
-local bit = require("bit")
 local vector = require("vector")
 
+local WHITE = string_format("\a%02x%02x%02x%02x", 255, 255, 255, 225)
+local LIGHTGRAY = string_format("\a%02x%02x%02x%02x", 175, 175, 175, 225)
+local GRAY = string_format("\a%02x%02x%02x%02x", 100, 100, 100, 225)
+local GREEN = string_format("\a%02x%02x%02x%02x", 175, 255, 175, 225)
+local RED = string_format("\a%02x%02x%02x%02x", 255, 175, 175, 225)
+local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
+local DESCRIPTIONS = {
+    ["Always"] = "Always true.",
+    ["Not moving"] = "Horizontal velocity < 2.",
+    ["Moving"] = "Horizontal velocity >= 2.",
+    ["Slow motion"] = "Slow walking and moving.",
+    ["On ground"] = "Touching the ground.",
+    ["In air"] = "Not touching the ground.",
+    ["On peek"] = "First 14 vulnerable ticks.",
+    ["Breaking LC"] = "Breaking lagcomp with fake lag.",
+    ["Vulnerable"] = "Can be shot by enemies.",
+    ["Crouching"] = "Crouching (Not fakeducking).",
+    ["Not crouching"] = "Not crouching.",
+    ["Height advantage"] = "25 HMU above your target.",
+    ["Height disadvantage"] = "25 HMU below your target.",
+    ["Doubletapping"] = "Holding doubletap key and not choking.",
+    ["Defensive"] = "When you break lagcomp with defensive doubletap.",
+    ["Terrorist"] = "You are on the terrorist team.",
+    ["Counter terrorist"] = "You are on the counter-terrorist team.",
+    ["Dormant"] = "All enemies are dormant for you.",
+    ["Round end"] = "The round is over and there are no enemies."
+}
+
+local screen = 0
+local blocks = {}
+local new_block = false
+local current_block = nil
+
 local references = {
-    { -- visible
-        fake_lag_limit = ui_reference("AA", "Fake lag", "Limit"),
-        slow_motion = ui_reference("AA", "Other", "Slow motion"),
-        slow_motion_key = select(2, ui_reference("AA", "Other", "Slow motion")),
-        onshot_aa = ui_reference("AA", "Other", "On shot anti-aim"),
-        onshot_aa_key = select(2, ui_reference("AA", "Other", "On shot anti-aim")),
-        double_tap = ui_reference("RAGE", "Other", "Double tap"),
-        double_tap_key = select(2, ui_reference("RAGE", "Other", "Double tap")),
-        double_tap_lag = ui_reference("RAGE", "Other", "Double tap fake lag limit"),
-        enabled = ui_reference("AA", "Anti-aimbot angles", "Enabled"),
-    },
-    { -- hidden
-        pitch = ui_reference("AA", "Anti-aimbot angles", "Pitch"),
-        yaw_base = ui_reference("AA", "Anti-aimbot angles", "Yaw base"),
-        yaw = ui_reference("AA", "Anti-aimbot angles", "Yaw"),
-        yaw_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Yaw")),
-        jitter = ui_reference("AA", "Anti-aimbot angles", "Yaw jitter"),
-        jitter_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Yaw jitter")),
-        body = ui_reference("AA", "Anti-aimbot angles", "Body yaw"),
-        body_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Body yaw")),
-        freestand_body = ui_reference("AA", "Anti-aimbot angles", "Freestanding body yaw"),
-        fake_limit = ui_reference("AA", "Anti-aimbot angles", "Fake yaw limit"),
-        roll = ui_reference("AA", "Anti-aimbot angles", "Roll"),
-        edge_yaw = ui_reference("AA", "Anti-aimbot angles", "Edge yaw"),
-        freestanding = ui_reference("AA", "Anti-aimbot angles", "Freestanding"),
-        freestanding_key = select(2, ui_reference("AA", "Anti-aimbot angles", "Freestanding")),
-    }
+    fake_lag_limit = ui_reference("AA", "Fake lag", "Limit"),
+    slow_motion = ui_reference("AA", "Other", "Slow motion"),
+    slow_motion_key = select(2, ui_reference("AA", "Other", "Slow motion")),
+    onshot_aa = ui_reference("AA", "Other", "On shot anti-aim"),
+    onshot_aa_key = select(2, ui_reference("AA", "Other", "On shot anti-aim")),
+    double_tap = ui_reference("RAGE", "Other", "Double tap"),
+    double_tap_key = select(2, ui_reference("RAGE", "Other", "Double tap")),
+    double_tap_lag = ui_reference("RAGE", "Other", "Double tap fake lag limit"),
+    enabled = ui_reference("AA", "Anti-aimbot angles", "Enabled"),
+    pitch = ui_reference("AA", "Anti-aimbot angles", "Pitch"),
+    yaw_base = ui_reference("AA", "Anti-aimbot angles", "Yaw base"),
+    yaw = ui_reference("AA", "Anti-aimbot angles", "Yaw"),
+    yaw_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Yaw")),
+    jitter = ui_reference("AA", "Anti-aimbot angles", "Yaw jitter"),
+    jitter_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Yaw jitter")),
+    body = ui_reference("AA", "Anti-aimbot angles", "Body yaw"),
+    body_val = select(2, ui_reference("AA", "Anti-aimbot angles", "Body yaw")),
+    freestand_body = ui_reference("AA", "Anti-aimbot angles", "Freestanding body yaw"),
+    fake_limit = ui_reference("AA", "Anti-aimbot angles", "Fake yaw limit"),
+    roll = ui_reference("AA", "Anti-aimbot angles", "Roll"),
+    edge_yaw = ui_reference("AA", "Anti-aimbot angles", "Edge yaw"),
+    freestanding = ui_reference("AA", "Anti-aimbot angles", "Freestanding"),
+    freestanding_key = select(2, ui_reference("AA", "Anti-aimbot angles", "Freestanding")),
 }
 
 local menu = {
-    browser = ui_new_listbox("AA", "Anti-aimbot angles", "Menu browser", {}),
+    -- main screen (0)
+    browser = ui_new_listbox("AA", "Anti-aimbot angles", "browser", blocks),
+    new = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "New", function() end),
+    edit = ui_new_button("AA", "Anti-aimbot angles", "Edit", function() end),
+    edit_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Edit", function() end),
+    toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
+    toggle_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Toggle", function() end),
+    move_up = ui_new_button("AA", "Anti-aimbot angles", "Move up", function() end),
+    move_up_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move up", function() end),
+    move_down = ui_new_button("AA", "Anti-aimbot angles", "Move down", function() end),
+    move_down_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move down", function() end),
+    delete = ui_new_button("AA", "Anti-aimbot angles", RED.. "Delete", function() end),
+    delete_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Delete", function() end),
 
-    conditions = ui_new_multiselect("AA", "Anti-aimbot angles", "Activation conditions", {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}),
-    conditions_logic = ui_new_combobox("AA", "Anti-aimbot angles", "\nConditions logic", "And", "Or"),
-    pitch = ui_new_combobox("AA", "Anti-aimbot angles", "Pitch", {"Off", "Default", "Down", "Up", "Random", "Minimal"}),
+    -- conditions editing screen (1)
+    cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
+    cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", CONDITIONS),
+    cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
+    save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
+    back = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
+    desc1 = ui_new_label("AA", "Anti-aimbot angles", "[DESCRIPTION]"),
+    desc2 = ui_new_label("AA", "Anti-aimbot angles", "[DESCRIPTION]"),
+
+    -- preset editing screen (2)
+    name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
+    name = ui_new_textbox("AA", "Anti-aimbot angles", "\nBlock name"),
+    pitch = ui_new_combobox("AA", "Anti-aimbot angles", "Pitch", {"Off", "Default", "Up", "Down", "Minimal", "Random"}),
     yaw_base = ui_new_combobox("AA", "Anti-aimbot angles", "Yaw base", {"Local view", "At targets"}),
     yaw = ui_new_combobox("AA", "Anti-aimbot angles", "Yaw", {"Off", "180", "Spin", "Static", "180 Z", "Crosshair"}),
-    yaw_val = ui_new_slider("AA", "Anti-aimbot angles", "\nYaw value", -180, 180, 8, true, "°"),
+    yaw_val = ui_new_slider("AA", "Anti-aimbot angles", "\nYaw slider", -180, 180, 8, true, "°"),
     jitter = ui_new_combobox("AA", "Anti-aimbot angles", "Yaw jitter", {"Off", "Offset", "Center", "Random"}),
-    jitter_val = ui_new_slider("AA", "Anti-aimbot angles", "\nYaw jitter value", -180, 180, 8, true, "°"),
-    body = ui_new_combobox("AA", "Anti-aimbot angles", "Body yaw", {"Off", "Opposite", "Jitter", "Static"}),
-    body_val = ui_new_slider("AA", "Anti-aimbot angles", "\nBody yaw value", -180, 180, 60, true, "°"),
+    jitter_val = ui_new_slider("AA", "Anti-aimbot angles", "\nYaw jitter slider", -180, 180, 8, true, "°"),
+    body = ui_new_combobox("AA", "Anti-aimbot angles", "Body yaw", {"Off", "Static", "Jitter", "Opposite"}),
+    body_val = ui_new_slider("AA", "Anti-aimbot angles", "\nBody yaw slider", -180, 180, 60, true, "°"),
     freestand_body = ui_new_checkbox("AA", "Anti-aimbot angles", "Freestanding body yaw"),
     fake_limit = ui_new_slider("AA", "Anti-aimbot angles", "Fake yaw limit", 0, 60, 60, true, "°"),
     edge_yaw = ui_new_checkbox("AA", "Anti-aimbot angles", "Edge yaw"),
-    freestanding = ui_new_checkbox("AA", "Anti-aimbot angles", "Freestanding"),
-    freestanding_key = ui_new_hotkey("AA", "Anti-aimbot angles", "Freestanding key", true),
+    freestanding = ui_new_multiselect("AA", "Anti-aimbot angles", "Freestanding", {"Default"}),
+    freestanding_key = ui_new_hotkey("AA", "Anti-aimbot angles", "\nFreestanding hotkey", true),
     roll = ui_new_slider("AA", "Anti-aimbot angles", "Roll", -50, 50, 0, true, "°"),
+    next = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Next", function() end),
+    back2 = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
 
-    blank_label = ui_new_label("AA", "Anti-aimbot angles", " "),
-    block_name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
-    block_name = ui_new_textbox("AA", "Anti-aimbot angles", "Block name textbox"),
-    add_block = ui_new_button("AA", "Anti-aimbot angles", "Add new", function() end),
-    add_block_save = ui_new_button("AA", "Anti-aimbot angles", "Save new", function() end),
-    edit_block = ui_new_button("AA", "Anti-aimbot angles", "Edit", function() end),
-    edit_block_save = ui_new_button("AA", "Anti-aimbot angles", "Save edits", function() end),
-    disable_block = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
-    delete_block = ui_new_button("AA", "Anti-aimbot angles", "Delete", function() end),
-    move_up = ui_new_button("AA", "Anti-aimbot angles", "Move up", function() end),
-    move_down = ui_new_button("AA", "Anti-aimbot angles", "Move down", function() end),
-    go_back = ui_new_button("AA", "Anti-aimbot angles", "Go back (unsaved)", function() end),
-
-    force_choke = ui_new_checkbox("AA", "Fake lag", "Force choke"),
-    disable_on_round_end = ui_new_checkbox("AA", "Fake lag", "Disable on round end"),
-    disable_on_shot = ui_new_checkbox("AA", "Fake lag", "Disable on shot"),
-    force_defensive = ui_new_checkbox("AA", "Fake lag", "Force defensive"),
-    force_defensive_key = ui_new_hotkey("AA", "Fake lag", "Force defensive key", true),
-
-    config = ui_new_string("Config save string", ""),
+    -- other
+    config = ui_new_string("new_aa_config", "")
 }
-
-local status = "Browsing menu"
-local last_browser = {nil, 0}
-local blocks = {}
 
 local function includes(tab, val)
     for i,v in ipairs(tab) do
@@ -99,72 +129,219 @@ local function includes(tab, val)
     return false
 end
 
-local function set_table_visibility(tab, b)
-    for k,v in pairs(tab) do
-        ui_set_visible(v, b)
+local Block = {}
+do
+    Block.__index = Block
+    local Block_mt = {}
+
+    function Block.new(name, import_from_menu)
+        local self = setmetatable({}, Block)
+
+        self.name = name or ""
+        self.enabled = true
+        self.conditions = {}
+        self.cond_type = "AND"
+        self.settings = {
+            pitch = "Off",
+            yaw_base = "Local view",
+            yaw = "Off",
+            yaw_val = 8,
+            jitter = "Off",
+            jitter_val = 8,
+            body = "Off",
+            body_val = 60,
+            freestand_body = false,
+            fake_limit = 60,
+            edge_yaw = false,
+            freestanding = {},
+            roll = 0
+        }
+
+        if import_from_menu then
+            self.name = "Gamesense"
+            for k in pairs(self.settings) do
+                self.settings[k] = ui_get(references[k])
+            end
+        end
+
+        return self
     end
-end
 
-local function update_browser()
-    local display_table = {}
-    local num_disabled = 0
+    function Block.to_block(tab)
+        local self = setmetatable(tab, Block)
+        return self
+    end
 
-    for i,v in ipairs(blocks) do
-        local disabled = v.disabled or false
-        local start = disabled and string_format("\a%02x%02x%02x%02x[-] ", 100, 100, 100, 225) or "["..(i - num_disabled).."] "
-        display_table[#display_table+1] = start.. v.name
-        if disabled then
-            num_disabled = num_disabled + 1
+    function Block:toggle_condition(cond)
+        if includes(self.conditions, cond) then
+            for i,v in ipairs(self.conditions) do
+                if v == cond then
+                    table_remove(self.conditions, i)
+                end
+            end
+        else
+            self.conditions[#self.conditions+1] = cond
         end
     end
 
-    ui_update(menu.browser, display_table)
+    function Block:conditions_met(local_conditions)
+        local conditions = self.conditions
+        local logic = self.cond_type
+
+        if #conditions == 0 then
+            return false
+        end
+
+        if logic == "AND" then
+            for _,cond in ipairs(conditions) do
+                if not local_conditions[cond] then
+                    return false
+                end
+            end
+
+            return true
+        elseif logic == "OR" then
+            for _,cond in ipairs(conditions) do
+                if local_conditions[cond] then
+                    return true
+                end
+            end
+
+            return false
+        end
+
+        return false
+    end
+
+    function Block:update()
+        self.name = ui_get(menu.name)
+        self.cond_type = ui_get(menu.cond_type)
+
+        for k in pairs(self.settings) do
+            self.settings[k] = ui_get(menu[k])
+        end
+    end
+
+    function Block:set_antiaim()
+        for k,v in pairs(self.settings) do
+            local ref = references[k]
+            if ref and k ~= "freestanding" then
+                ui_set(ref, v)
+            elseif k == "freestanding" then
+                ui_set(ref, v == {"Default"} and ui_get(menu.freestanding_key) and {"Default"} or {"-"})
+            end
+        end
+    end
+
+    function Block_mt.__call(_, ...)
+        return Block.new(...)
+    end
+
+    setmetatable(Block, Block_mt)
 end
 
-local function update_menu_settings(block)
-    if not block then block = {} end
+local function set_table_visibility(...)
+    local args = {...}
+    local bool = args[#args]
 
-    ui_set(menu.conditions, block.conditions or {})
-    ui_set(menu.conditions_logic, block.conditions_logic or "And")
-    ui_set(menu.pitch, block.pitch or "Off")
-    ui_set(menu.yaw_base, block.yaw_base or "Local view")
-    ui_set(menu.yaw, block.yaw or "Off")
-    ui_set(menu.yaw_val, block.yaw_val or 8)
-    ui_set(menu.jitter, block.jitter or "Off")
-    ui_set(menu.jitter_val, block.jitter_val or 8)
-    ui_set(menu.body, block.body or "Off")
-    ui_set(menu.body_val, block.body_val or 60)
-    ui_set(menu.freestand_body, block.freestand_body or false)
-    ui_set(menu.fake_limit, block.fake_limit or 60)
-    ui_set(menu.edge_yaw, block.edge_yaw or false)
-    ui_set(menu.freestanding, block.freestanding or false)
-    ui_set(menu.roll, block.roll or 0)
+    for i = 1, #args-1 do
+        ui_set_visible(args[i], bool)
+    end
 end
 
-local function update_menu()
-    local browsing_menu = status == "Browsing menu"
+local function set_references_visibility(b)
+    set_table_visibility(references.pitch, references.yaw_base, references.yaw, references.yaw_val, references.jitter, references.jitter_val, references.body, references.body_val, references.freestand_body, references.fake_limit, references.roll, references.edge_yaw, references.freestanding, references.freestanding_key, b)
+end
+
+local function update_browser()
+    local display = {}
+    local num = 1
+    for i,v in ipairs(blocks) do
+        display[#display+1] = v.enabled and string_format("%s[%i] %s%s", LIGHTGRAY, num, WHITE, v.name) or string_format("%s[  ] %s%s", LIGHTGRAY, GRAY, v.name)
+        num = v.enabled and num+1 or num
+    end
+
+    ui_update(menu.browser, display)
+end
+
+local function update_cond_browser()
+    if not current_block then
+        return
+    end
+
+    local display = {}
+
+    for _,v in ipairs(CONDITIONS) do
+        display[#display+1] = string_format("%s%s", includes(current_block.conditions, v) and WHITE or GRAY, v)
+    end
+
+    ui_update(menu.cond_browser, display)
+end
+
+local function update_cond_description(condition)
+    local description = condition.. ": ".. DESCRIPTIONS[condition] or "Unknown."
+    local desc1, desc2 = "", ""
+    local len = 0
+    
+    for s in description:gmatch("%S+") do
+        local s_ = s.. " "
+        if len + #s_ <= 30 then
+            desc1 = desc1.. s_
+        else
+            desc2 = desc2.. s_
+        end
+        len = len + #s_
+    end
+
+    ui_set(menu.desc1, LIGHTGRAY.. desc1)
+    ui_set(menu.desc2, LIGHTGRAY.. desc2)
+end
+
+local function update_values()
+    if not current_block then
+        return
+    end
+
+    ui_set(menu.name, current_block.name)
+    ui_set(menu.cond_type, current_block.cond_type)
+
+    for k,v in pairs(current_block.settings) do
+        ui_set(menu[k], v)
+    end
+
+    update_cond_browser()
+end
+
+local function update_visibility(s)
     local browser = ui_get(menu.browser)
-    local has_block = status:find("block")
 
-    set_table_visibility({menu.browser, menu.add_block}, browsing_menu)
-    set_table_visibility({menu.block_name_label, menu.block_name, menu.conditions, menu.conditions_logic, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll}, has_block)
+    if type(s) == "number" then
+        screen = s
+    end
 
-    ui_set_visible(menu.add_block_save, status == "Adding block")
-    ui_set_visible(menu.edit_block, browsing_menu and browser)
-    ui_set_visible(menu.edit_block_save, status == "Editing block")
-    ui_set_visible(menu.delete_block, browsing_menu and browser and #blocks > 1)
-    ui_set_visible(menu.disable_block, browsing_menu and browser)
-    ui_set_visible(menu.move_up, browsing_menu and browser and browser > 0)
-    ui_set_visible(menu.move_down, browsing_menu and browser and browser < #blocks - 1)
-    ui_set_visible(menu.go_back, not browsing_menu and status ~= "Tutorial")
-    ui_set_visible(menu.blank_label, not browsing_menu)
+    set_table_visibility(menu.browser, menu.new, screen == 0)
+    ui_set_visible(menu.edit, screen == 0 and browser)
+    ui_set_visible(menu.edit_inactive, screen == 0 and not browser)
+    ui_set_visible(menu.toggle, screen == 0 and browser)
+    ui_set_visible(menu.toggle_inactive, screen == 0 and not browser)
+    ui_set_visible(menu.move_up, screen == 0 and browser and browser > 0)
+    ui_set_visible(menu.move_up_inactive, screen == 0 and not (browser and browser > 0))
+    ui_set_visible(menu.move_down, screen == 0 and browser and browser < #blocks-1)
+    ui_set_visible(menu.move_down_inactive, screen == 0 and not (browser and browser < #blocks-1))
+    ui_set_visible(menu.delete, screen == 0 and browser and #blocks > 1)
+    ui_set_visible(menu.delete_inactive, screen == 0 and not (browser and #blocks > 1))
 
-    ui_set_visible(menu.yaw_val, has_block and ui_get(menu.yaw) ~= "Off")
-    ui_set_visible(menu.jitter, has_block and ui_get(menu.yaw) ~= "Off")
-    ui_set_visible(menu.jitter_val, has_block and ui_get(menu.yaw) ~= "Off" and ui_get(menu.jitter) ~= "Off")
-    ui_set_visible(menu.body_val, has_block and ui_get(menu.body) ~= "Off" and ui_get(menu.body) ~= "Opposite")
-    ui_set_visible(menu.freestand_body, has_block and ui_get(menu.body) ~= "Off")
-    ui_set_visible(menu.fake_limit, has_block and ui_get(menu.body) ~= "Off")
+    set_table_visibility(menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.back, menu.desc1, menu.desc2, screen == 2)
+
+    set_table_visibility(menu.name_label, menu.name, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.fake_limit, menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll, menu.next, menu.back2, screen == 1)
+    ui_set_visible(menu.yaw_val, screen == 1 and ui_get(menu.yaw) ~= "Off")
+    ui_set_visible(menu.jitter, screen == 1 and ui_get(menu.yaw) ~= "Off")
+    ui_set_visible(menu.jitter_val, screen == 1 and ui_get(menu.yaw) ~= "Off" and ui_get(menu.jitter) ~= "Off")
+    ui_set_visible(menu.body_val, screen == 1 and ui_get(menu.body) ~= "Off" and ui_get(menu.body) ~= "Opposite")
+    ui_set_visible(menu.freestand_body, screen == 1 and ui_get(menu.body) ~= "Off")
+    ui_set_visible(menu.fake_limit, screen == 1 and ui_get(menu.body) ~= "Off")
+
+    update_browser()
 end
 
 local vulnerable_ticks = 0
@@ -236,7 +413,7 @@ local function get_conditions(cmd, local_player)
     local conditions = {
         ["Always"] = true,
         ["Not moving"] = speed < 2,
-        ["Slow motion"] = ui_get(references[1].slow_motion) and ui_get(references[1].slow_motion_key) and speed >= 2,
+        ["Slow motion"] = ui_get(references.slow_motion) and ui_get(references.slow_motion_key) and speed >= 2,
         ["Moving"] = speed >= 2,
         ["On ground"] = on_ground_ticks > 1,
         ["In air"] = on_ground_ticks <= 1,
@@ -247,7 +424,7 @@ local function get_conditions(cmd, local_player)
         ["Vulnerable"] = is_vulnerable(),
         ["Not crouching"] = duck_amount < 0.9,
         ["Crouching"] = duck_amount >= 0.9,
-        ["Doubletapping"] = ui_get(references[1].double_tap) and ui_get(references[1].double_tap_key) and cmd.chokedcommands <= ui_get(references[1].double_tap_lag),
+        ["Doubletapping"] = ui_get(references.double_tap) and ui_get(references.double_tap_key) and cmd.chokedcommands <= ui_get(references.double_tap_lag),
         ["Defensive"] = is_defensive_active(local_player),
         ["Terrorist"] = team_num == 2,
         ["Counter terrorist"] = team_num == 3,
@@ -258,255 +435,93 @@ local function get_conditions(cmd, local_player)
     return conditions
 end
 
-local Block = {}
-do
-    Block.__index = Block
-
-    function Block.defaults()
-        return {
-            disabled = false,
-            conditions = {"Always"},
-            conditions_logic = "And",
-            pitch = ui_get(references[2].pitch),
-            yaw_base = ui_get(references[2].yaw_base),
-            yaw = ui_get(references[2].yaw),
-            yaw_val = ui_get(references[2].yaw_val),
-            jitter = ui_get(references[2].jitter),
-            jitter_val = ui_get(references[2].jitter_val),
-            body = ui_get(references[2].body),
-            body_val = ui_get(references[2].body_val),
-            freestand_body = ui_get(references[2].freestand_body),
-            fake_limit = ui_get(references[2].fake_limit),
-            roll = ui_get(references[2].roll),
-            freestanding = #ui_get(references[2].freestanding) == 1 and ui_get(references[2].freestanding_key),
-            edge_yaw = ui_get(references[2].edge_yaw)
-        }
-    end
-
-    function Block.new(name)
-        local self = setmetatable({}, Block)
-
-        self:update_settings(name)
-
-        blocks[#blocks+1] = self
-    end
-
-    function Block.new_from_table(name, tab)
-        local self = setmetatable({}, Block)
-        local settings = Block.defaults()
-
-        for k,v in pairs(tab) do
-            if settings[k] then -- compatability between versions
-                settings[k] = v
-            end
-        end
-
-        settings.name = name
-
-        for k,v in pairs(settings) do
-            self[k] = v
-        end
-
-        blocks[#blocks+1] = self
-    end
-
-    function Block:update_settings(name)
-        self.name = name or self.name or "Default"
-        self.disabled = self.disabled ~= nil and self.disabled or false
-        self.conditions = ui_get(menu.conditions)
-        self.conditions_logic = ui_get(menu.conditions_logic)
-        self.pitch = ui_get(menu.pitch)
-        self.yaw_base = ui_get(menu.yaw_base)
-        self.yaw = ui_get(menu.yaw)
-        self.yaw_val = ui_get(menu.yaw_val)
-        self.jitter = ui_get(menu.jitter)
-        self.jitter_val = ui_get(menu.jitter_val)
-        self.body = ui_get(menu.body)
-        self.body_val = ui_get(menu.body_val)
-        self.freestand_body = ui_get(menu.freestand_body)
-        self.fake_limit = ui_get(menu.fake_limit)
-        self.roll = ui_get(menu.roll)
-        self.freestanding = ui_get(menu.freestanding)
-        self.edge_yaw = ui_get(menu.edge_yaw)
-    end
-
-    function Block:set_antiaim(cmd)
-        if cmd.chokedcommands > 0 then
-            return
-        end
-
-        for k,v in pairs(self) do
-            local ref = references[2][k]
-            if ref and k ~= "freestanding" then
-                ui_set(ref, v)
-            elseif k == "freestanding" then
-                ui_set(ref, v and ui_get(menu.freestanding_key) and "Default" or "-")
-            end
-        end
-
-        ui_set(references[2].freestanding_key, "Always on")
-    end
-
-    function Block:conditions_met(cmd, local_player, local_conditions)
-        local conditions = self.conditions
-        local num_conditions = #conditions
-        local logic = self.conditions_logic
-        local num_required = logic == "And" and num_conditions or logic == "Or" and 1 or -1
-
-        if logic == "And" then
-            for i,condition in ipairs(conditions) do
-                if not local_conditions[condition] then
-                    return false
-                end
-            end
-
-            return true
-        elseif logic == "Or" then
-            for i,condition in ipairs(conditions) do
-                if local_conditions[condition] then
-                    return true
-                end
-            end
-
-            return false
-        end
-
-        return false
-    end
-end
-
-local function set_defaults()
-    Block.new_from_table("Default", Block.defaults())
-    update_browser()
-end
-
-local function run_antiaim(cmd, local_player, local_conditions)
-    local browser = ui_get(menu.browser)
-    if ui_is_menu_open() and browser and status == "Editing block" then
-        local block = blocks[browser+1]
-        block:update_settings()
-        block:set_antiaim(cmd)
-        ui_set(references[2].yaw_base, "Local view")
+local function run_antiaim(local_conditions)
+    if screen == 1 then
+        current_block:update()
+        current_block:set_antiaim()
     else
         for i,block in ipairs(blocks) do
-            if (block:conditions_met(cmd, local_player, local_conditions) or i == #blocks) and not block.disabled then
-                block:set_antiaim(cmd)
+            if (block:conditions_met(local_conditions) or i == #blocks) and block.enabled then
+                block:set_antiaim()
                 break
             end
         end
     end
 
-    set_table_visibility(references[2], false)
+    set_references_visibility(false)
 end
 
-local last_shot = 0
-local function run_fakelag(cmd, local_player, local_conditions)
-    local flags = entity_get_prop(local_player, "m_fFlags")
-    local on_ground = bit_band(flags, 1) == 1
-    local no_choke = false
-    local round_end = local_conditions["Round end"]
-
-    if ui_get(menu.force_defensive) and ui_get(menu.force_defensive_key) and not round_end then
-        cmd.force_defensive = 1
+local function on_setup_command(cmd)
+    if not ui_get(references.enabled) then
+        return
     end
 
-    if round_end and ui_get(menu.disable_on_round_end) or ui_get(menu.disable_on_shot) and globals_tickcount() - last_shot == 1 then
-        cmd.no_choke = 1
-        no_choke = true
-    end
+    local local_player = entity_get_local_player()
+    local local_conditions = get_conditions(cmd, local_player)
 
-    if ui_get(menu.force_choke) and not no_choke then
-        cmd.allow_send_packet = false
-    end
+    run_antiaim(local_conditions)
 end
 
-local function load_config(tab)
+local function load_config()
+    local cfg = json_parse(ui_get(menu.config))
+    current_block = nil
     blocks = {}
 
-    for i,v in ipairs(tab) do
-        Block.new_from_table(v.name, v)
+    for i,v in ipairs(cfg) do
+        blocks[#blocks+1] = Block.to_block(v)
     end
 
+    update_visibility(0)
+    set_references_visibility(false)
     ui_set(menu.browser, 0)
-    update_browser()
-    set_table_visibility(references[2], false)
 end
 
 local function save_config()
     ui_set(menu.config, tostring(json_stringify(blocks)))
 end
 
-local function set_button_callbacks()
-    ui_set_callback(menu.browser, function(self)
-        local idx = ui_get(self) + 1
-        local realtime = globals_realtime()
-        
-        if realtime - last_browser[2] < 0.5 and idx == last_browser[1] then
-            ui_set(menu.edit_block, true)
+local function on_init()
+    local cache = database_read("new_aa_cache")
+
+    if cache and globals_realtime() - cache[1] < 0.1 then
+        for i,v in ipairs(cache[2]) do
+            blocks[#blocks+1] = Block.to_block(v)
         end
+    else
+        blocks[#blocks+1] = Block("Default", true)
+    end
 
-        last_browser = {idx, globals_realtime()}
-        update_menu()
+    set_references_visibility(false)
+    update_visibility(0)
+
+    client_set_event_callback("setup_command", on_setup_command)
+    client_set_event_callback("pre_config_save", save_config)
+    client_set_event_callback("post_config_load", load_config)
+
+    client_set_event_callback("shutdown", function()
+        set_references_visibility(true)
+        database_write("new_aa_cache", {globals_realtime(), blocks})
     end)
 
-    ui_set_callback(menu.add_block_save, function()
-        Block.new(ui_get(menu.block_name))
-        update_browser()
-        ui_set(menu.go_back, true)
-    end)
+    ui_set_callback(menu.new, function() new_block = true; current_block = Block(); update_values(); update_visibility(1) end)
+    ui_set_callback(menu.edit, function() new_block = false; current_block = blocks[ui_get(menu.browser)+1]; update_values(); update_visibility(1) end)
+    ui_set_callback(menu.toggle, function() blocks[ui_get(menu.browser)+1].enabled = not blocks[ui_get(menu.browser)+1].enabled; update_browser() end)
+    ui_set_callback(menu.delete, function() table_remove(blocks, ui_get(menu.browser)+1); update_browser(); if #blocks > 0 then ui_set(menu.browser, ui_get(menu.browser)-1) end; update_visibility(0) end)
+    ui_set_callback(menu.next, function() update_visibility(2) end)
+    ui_set_callback(menu.back, function() update_visibility(1) end)
+    ui_set_callback(menu.yaw, function() if screen == 1 then update_visibility(1) end end)
+    ui_set_callback(menu.jitter, function() if screen == 1 then update_visibility(1) end end)
+    ui_set_callback(menu.body, function() if screen == 1 then update_visibility(1) end end)
+    ui_set_callback(menu.save, function() current_block:update(); if new_block then blocks[#blocks+1] = current_block end; current_block = nil; update_visibility(0) end)
+    ui_set_callback(menu.back2, function() update_visibility(0) end)
+    ui_set_callback(menu.cond_toggle, function() current_block:toggle_condition(CONDITIONS[ui_get(menu.cond_browser)+1]); update_cond_browser() end)
 
-    ui_set_callback(menu.edit_block_save, function()
-        local idx = ui_get(menu.browser) + 1
-        local current_block = blocks[idx]
-        current_block:update_settings(ui_get(menu.block_name))
-        ui_set(menu.go_back, true)
-        update_browser()
-    end)
-
-    ui_set_callback(menu.add_block, function() 
-        status = "Adding block"
-        ui_set(menu.block_name, "") 
-        update_menu_settings() 
-        update_menu() 
-    end)
-
-    ui_set_callback(menu.edit_block, function() 
-        if not ui_get(menu.browser) then
-            return
-        end
-
-        local idx = ui_get(menu.browser) + 1
-        ui_set(menu.block_name, blocks[idx].name)
-        status = "Editing block"
-        update_menu_settings(blocks[ui_get(menu.browser)+1]) 
-        update_menu() 
-    end)
-
-    ui_set_callback(menu.delete_block, function()
-        if #blocks == 1 then
-            return
-        end
-        local idx = ui_get(menu.browser) + 1
-        table_remove(blocks, idx)
-        update_browser()
-        update_menu()
-        if ui_get(menu.browser) and ui_get(menu.browser) >= #blocks then
-            ui_set(menu.browser, #blocks-1)
-        end
-    end)
-
-    ui_set_callback(menu.disable_block, function()
-        local idx = ui_get(menu.browser) + 1
-        blocks[idx].disabled = not blocks[idx].disabled
-        update_browser()
-    end)
-    
     ui_set_callback(menu.move_up, function()
         local idx = ui_get(menu.browser) + 1
         local temp = table_remove(blocks, idx)
         table_insert(blocks, idx-1, temp)
         update_browser()
-        ui_set(menu.browser, idx - 2)
+        ui_set(menu.browser, idx-2)
     end)
 
     ui_set_callback(menu.move_down, function()
@@ -516,64 +531,36 @@ local function set_button_callbacks()
         update_browser()
         ui_set(menu.browser, idx)
     end)
-    
-    ui_set_callback(menu.go_back, function() 
-        status = "Browsing menu"
-        update_menu() 
+
+    local prev_browser = {nil, nil}
+    ui_set_callback(menu.browser, function(self)
+        if not ui_get(self) then
+            return
+        end
+
+        local idx = ui_get(self) + 1
+        local realtime = globals_realtime()
+
+        if idx == prev_browser[1] and realtime - prev_browser[2] <= 0.25 then
+            ui_set(menu.edit, true)
+        end
+
+        prev_browser = {idx, realtime}
+        update_visibility(false)
     end)
 
-    ui_set_callback(menu.yaw, update_menu)
-    ui_set_callback(menu.jitter, update_menu)
-    ui_set_callback(menu.body, update_menu)
+    local prev_cond_browser = {nil, nil}
+    ui_set_callback(menu.cond_browser, function(self)
+        local idx = ui_get(self) + 1
+        local realtime = globals_realtime()
+
+        if idx == prev_cond_browser[1] and realtime - prev_cond_browser[2] <= 0.25 then
+            ui_set(menu.cond_toggle, true)
+        end
+
+        update_cond_description(CONDITIONS[idx])
+        prev_cond_browser = {idx, realtime}
+    end)
 end
 
-client_set_event_callback("setup_command", function(cmd)
-    if not ui_get(references[1].enabled) then
-        return
-    end
-
-    local local_player = entity_get_local_player()
-    local local_conditions = get_conditions(cmd, local_player)
-    run_antiaim(cmd, local_player, local_conditions)
-    run_fakelag(cmd, local_player, local_conditions)
-end)
-
-client_set_event_callback("weapon_fire", function(e)
-    local local_player = entity_get_local_player()
-
-    if client_userid_to_entindex(e.userid) == local_player then
-        last_shot = globals_tickcount()
-    end
-end)
-
-client_set_event_callback("pre_config_save", save_config)
-
-client_set_event_callback("post_config_load", function()
-    local cfg = ui_get(menu.config)
-
-    load_config(json_parse(cfg))
-
-    status = "Browsing menu"
-    update_menu()
-end)
-
-client_set_event_callback("shutdown", function()
-    set_table_visibility(references[2], true)
-    database_write("block_aa_cache", {globals_realtime(), blocks})
-end)
-
-local function init()
-    local cache = database_read("block_aa_cache") or nil
-    if cache and globals_realtime() - cache[1] < 0.1 and globals_realtime() - cache[1] >= 0 then
-        load_config(cache[2])
-    else
-        set_defaults()
-        save_config()
-    end
-
-    set_table_visibility(references[2], false)
-    set_button_callbacks()
-    update_menu()
-end 
-
-init()
+on_init()
