@@ -116,6 +116,7 @@ local menu = {
     freestanding = ui_new_multiselect("AA", "Anti-aimbot angles", "Freestanding", {"Default"}),
     freestanding_key = ui_new_hotkey("AA", "Anti-aimbot angles", "\nFreestanding hotkey", true),
     roll = ui_new_slider("AA", "Anti-aimbot angles", "Roll", -50, 50, 0, true, "°"),
+    force_defensive = ui_new_checkbox("AA", "Anti-aimbot angles", "Force defensive"),
     next = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Next", function() end),
     back2 = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
 
@@ -145,6 +146,7 @@ do
         self.enabled = true
         self.conditions = {}
         self.cond_type = "AND"
+        self.force_defensive = false
         self.settings = {
             pitch = "Off",
             yaw_base = "Local view",
@@ -220,13 +222,14 @@ do
     function Block:update()
         self.name = ui_get(menu.name)
         self.cond_type = ui_get(menu.cond_type)
+        self.force_defensive = ui_get(menu.force_defensive)
 
         for k in pairs(self.settings) do
             self.settings[k] = ui_get(menu[k])
         end
     end
 
-    function Block:set_antiaim()
+    function Block:set_antiaim(cmd)
         for k,v in pairs(self.settings) do
             local ref = references[k]
             if ref and k ~= "freestanding" then
@@ -234,6 +237,10 @@ do
             elseif k == "freestanding" then
                 ui_set(ref, v == {"Default"} and ui_get(menu.freestanding_key) and {"Default"} or {"-"})
             end
+        end
+
+        if self.force_defensive then
+            cmd.force_defensive = 1
         end
     end
 
@@ -315,6 +322,7 @@ local function update_values()
     end
 
     ui_set(menu.name, current_block.name)
+    ui_set(menu.force_defensive, current_block.force_defensive or false)
     ui_set(menu.cond_type, current_block.cond_type)
 
     for k,v in pairs(current_block.settings) do
@@ -345,7 +353,7 @@ local function update_visibility(s)
 
     set_table_visibility(menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.back, menu.desc1, menu.desc2, screen == 2)
 
-    set_table_visibility(menu.name_label, menu.name, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.fake_limit, menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll, menu.next, menu.back2, screen == 1)
+    set_table_visibility(menu.name_label, menu.name, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.fake_limit, menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll, menu.force_defensive, menu.next, menu.back2, screen == 1)
     ui_set_visible(menu.yaw_val, screen == 1 and ui_get(menu.yaw) ~= "Off")
     ui_set_visible(menu.jitter, screen == 1 and ui_get(menu.yaw) ~= "Off")
     ui_set_visible(menu.jitter_val, screen == 1 and ui_get(menu.yaw) ~= "Off" and ui_get(menu.jitter) ~= "Off")
@@ -451,14 +459,14 @@ local function get_conditions(cmd, local_player)
     return conds
 end
 
-local function run_antiaim(local_conditions)
+local function run_antiaim(cmd, local_conditions)
     if screen == 1 then
         current_block:update()
-        current_block:set_antiaim()
+        current_block:set_antiaim(cmd)
     else
         for i,block in ipairs(blocks) do
             if (block:conditions_met(local_conditions) or i == #blocks) and block.enabled then
-                block:set_antiaim()
+                block:set_antiaim(cmd)
                 break
             end
         end
@@ -475,7 +483,7 @@ local function on_setup_command(cmd)
     local local_player = entity_get_local_player()
     local local_conditions = get_conditions(cmd, local_player)
 
-    run_antiaim(local_conditions)
+    run_antiaim(cmd, local_conditions)
 end
 
 local function add_condition(name, desc, func)
