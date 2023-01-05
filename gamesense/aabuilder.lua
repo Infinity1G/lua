@@ -120,7 +120,7 @@ local menu = {
     back2 = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
 
     -- other
-    config = ui_new_string("new_aa_config", "")
+    config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
 }
 
 local function includes(tab, val)
@@ -495,14 +495,14 @@ end
 
 local function load_config()
     local json_cfg = ui_get(menu.config)
+    current_block = nil
+    blocks = {}
     
-    if #json_cfg == 0 then
+    if json_cfg == "{}" then
         blocks[#blocks+1] = Block("Default", true)
         save_config()
     else
         local cfg = json_parse(ui_get(menu.config)) or {}
-        current_block = nil
-        blocks = {}
 
         for i,v in ipairs(cfg) do
             blocks[#blocks+1] = Block.to_block(v)
