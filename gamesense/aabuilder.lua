@@ -280,7 +280,7 @@ local function update_cond_browser()
     end
 
     for _,v in ipairs(custom_conditions) do
-        display[#display+1] = string_format("%s! %s%s", YELLOW, includes(current_block.conditions, v) and WHITE or GRAY, v)
+        display[#display+1] = string_format("%s[c] %s%s", YELLOW, includes(current_block.conditions, v) and WHITE or GRAY, v)
     end
 
     ui_update(menu.cond_browser, display)
