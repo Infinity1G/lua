@@ -481,19 +481,6 @@ local function save_config()
 end
 
 local function on_init()
-    local cache = database_read("new_aa_cache")
-
-    if cache and globals_realtime() - cache[1] < 0.1 then
-        for i,v in ipairs(cache[2]) do
-            blocks[#blocks+1] = Block.to_block(v)
-        end
-    else
-        blocks[#blocks+1] = Block("Default", true)
-    end
-
-    set_references_visibility(false)
-    update_visibility(0)
-
     client_set_event_callback("setup_command", on_setup_command)
     client_set_event_callback("pre_config_save", save_config)
     client_set_event_callback("post_config_load", load_config)
@@ -561,6 +548,19 @@ local function on_init()
         update_cond_description(CONDITIONS[idx])
         prev_cond_browser = {idx, realtime}
     end)
+    
+    local cache = database_read("new_aa_cache")
+
+    if cache and globals_realtime() - cache[1] < 0.1 then
+        for i,v in ipairs(cache[2]) do
+            blocks[#blocks+1] = Block.to_block(v)
+        end
+    else
+        blocks[#blocks+1] = Block("Default", true)
+    end
+
+    set_references_visibility(false)
+    update_visibility(0)
 end
 
 on_init()
