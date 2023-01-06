@@ -1,19 +1,31 @@
+local ENABLE_AUTOUPDATER = true
+local VERSION = "1.5"
+
 local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
-local globals_realtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.tickcount, globals.maxplayers
+local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.curtime, globals.tickcount, globals.maxplayers
 local json_stringify, json_parse = json.stringify, json.parse
 local table_remove, table_insert = table.remove, table.insert
 local string_format, string_rep = string.format, string.rep
 local math_abs, math_sqrt = math.abs, math.sqrt
 local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
-local client_set_event_callback, client_latency, client_current_threat = client.set_event_callback, client.latency, client.current_threat
+local error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat = client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat
 local database_read, database_write = database.read, database.write
-local select, setmetatable, toticks, require, tostring, ipairs, pairs, type = select, setmetatable, toticks, require, tostring, ipairs, pairs, type
+local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile
 
 local vector = require("vector")
+local http = nil
+
+if ENABLE_AUTOUPDATER then
+    if not pcall(require, "gamesense/http") then
+        error_log("The HTTP library is needed for the autoupdater to work.")
+    else
+        http = require("gamesense/http")
+    end
+end
 
 local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED = "\aFFFFFFE1", "\aAFAFAFE1", "\a646464E1", "\aAFFFAFE1", "\aFFFF96E1", "\aFFAFAFE1"
-local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
+local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Warm up", "Pre-round", "Round end"}
 local DESCRIPTIONS = {
     ["Always"] = "Always true.",
     ["Not moving"] = "Horizontal velocity < 2.",
@@ -35,9 +47,12 @@ local DESCRIPTIONS = {
     ["Terrorist"] = "You are on the terrorist team.",
     ["Counter terrorist"] = "You are on the counter-terrorist team.",
     ["Dormant"] = "All enemies are dormant for you.",
+    ["Warm up"] = "Game is in warm up period.",
+    ["Pre-round"] = "Before the round starts.",
     ["Round end"] = "The round is over and there are no enemies."
 }
 
+local update_available = false
 local custom_conditions = {}
 local custom_descriptions = {}
 local custom_funcs = {}
@@ -86,6 +101,9 @@ local menu = {
     move_down_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move down", function() end),
     delete = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Delete", function() end),
     delete_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Delete", function() end),
+    updater_label = ui_new_label("AA", "Anti-aimbot angles", "Version x.x is available."),
+    download = ui_new_button("AA", "Anti-aimbot angles", "Download update", function() end),
+    ignore = ui_new_button("AA", "Anti-aimbot angles", "Ignore", function() end),
 
     -- conditions editing screen (1)
     cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
@@ -351,6 +369,9 @@ local function update_visibility(s)
     ui_set_visible(menu.move_down_inactive, screen == 0 and not (browser and browser < #blocks-1))
     ui_set_visible(menu.delete, screen == 0 and browser and #blocks > 1)
     ui_set_visible(menu.delete_inactive, screen == 0 and not (browser and #blocks > 1))
+    ui_set_visible(menu.updater_label, screen == 0 and update_available)
+    ui_set_visible(menu.download, screen == 0 and update_available)
+    ui_set_visible(menu.ignore, screen == 0 and update_available)
 
     set_table_visibility(menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.back, menu.desc1, menu.desc2, screen == 2)
 
@@ -447,6 +468,7 @@ end
 
 local last_origin, on_ground_ticks = vector(0,0,0), 0
 local function get_conditions(cmd, local_player)
+    local game_rules = entity_get_game_rules()
     local velocity = {entity_get_prop(local_player, "m_vecVelocity")}
     local speed = math_sqrt(velocity[1] * velocity[1] + velocity[2] * velocity[2])
     local flags = entity_get_prop(local_player, "m_fFlags")
@@ -459,6 +481,7 @@ local function get_conditions(cmd, local_player)
     local height_to_threat = 0
     local vulnerable = is_vulnerable()
     local enemies = entity_get_players(true)
+    local curtime = globals_curtime()
 
     on_ground_ticks = on_ground and on_ground_ticks + 1 or 0
     
@@ -492,7 +515,9 @@ local function get_conditions(cmd, local_player)
         ["Terrorist"] = team_num == 2,
         ["Counter terrorist"] = team_num == 3,
         ["Dormant"] = #enemies == 0,
-        ["Round end"] = entity_get_prop(entity_get_game_rules(), "m_iRoundWinStatus") ~= 0 and get_total_enemies() == 0
+        ["Warm up"] = entity_get_prop(game_rules, "m_bWarmupPeriod") == 1,
+        ["Pre-round"] = entity_get_prop(game_rules, "m_fRoundStartTime") > curtime + toticks(client_latency()),
+        ["Round end"] = entity_get_prop(game_rules, "m_iRoundWinStatus") ~= 0 and get_total_enemies() == 0
     }
 
     for _,v in ipairs(custom_conditions) do
@@ -670,6 +695,38 @@ local function on_init()
     
     set_references_visibility(false)
     update_visibility(0)
+
+    if ENABLE_AUTOUPDATER and http then
+        ui_set_callback(menu.ignore, function()
+            update_available = false
+            update_visibility()
+        end)
+
+        ui_set_callback(menu.download, function()
+            http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder.lua", function(success, response)
+                if success and response.status == 200 then
+                    local body = response.body
+                    local name = _NAME
+
+                    writefile(_NAME..".lua", body)
+                    client_reload_active_scripts()
+                end
+            end)
+        end)
+
+        http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder_version.txt", function(success, response)
+            if success and response.status == 200 then
+                local cloud_version = response.body
+                cloud_version = cloud_version:gsub("\n$", "")
+
+                if cloud_version ~= VERSION then
+                    update_available = true
+                    ui_set(menu.updater_label, string_format("%sVersion %s%s%s is available to download.", LIGHTGRAY, GREEN, cloud_version, LIGHTGRAY))
+                    update_visibility()
+                end
+            end
+        end)
+    end
 end
 
 on_init()
