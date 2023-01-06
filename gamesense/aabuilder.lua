@@ -5,20 +5,15 @@ local table_remove, table_insert = table.remove, table.insert
 local string_format, string_rep = string.format, string.rep
 local math_abs, math_sqrt = math.abs, math.sqrt
 local bit_band, bit_lshift = bit.band, bit.lshift
-local entity_get_local_player, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
+local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
 local client_set_event_callback, client_latency, client_current_threat = client.set_event_callback, client.latency, client.current_threat
 local database_read, database_write = database.read, database.write
 local select, setmetatable, toticks, require, tostring, ipairs, pairs, type = select, setmetatable, toticks, require, tostring, ipairs, pairs, type
 
 local vector = require("vector")
 
-local WHITE = string_format("\a%02x%02x%02x%02x", 255, 255, 255, 225)
-local LIGHTGRAY = string_format("\a%02x%02x%02x%02x", 175, 175, 175, 225)
-local GRAY = string_format("\a%02x%02x%02x%02x", 100, 100, 100, 225)
-local GREEN = string_format("\a%02x%02x%02x%02x", 175, 255, 175, 225)
-local YELLOW = string_format("\a%02x%02x%02x%02x", 255, 255, 150, 225)
-local RED = string_format("\a%02x%02x%02x%02x", 255, 175, 175, 225)
-local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
+local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED = "\aFFFFFFE1", "\aAFAFAFE1", "\a646464E1", "\aAFFFAFE1", "\aFFFF96E1", "\aFFAFAFE1"
+local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Round end"}
 local DESCRIPTIONS = {
     ["Always"] = "Always true.",
     ["Not moving"] = "Horizontal velocity < 2.",
@@ -33,8 +28,10 @@ local DESCRIPTIONS = {
     ["Not crouching"] = "Not crouching.",
     ["Height advantage"] = "25 HMU above your target.",
     ["Height disadvantage"] = "25 HMU below your target.",
+    ["Knifeable"] = "About to be knifed by an enemy.",
+    ["Zeusable"] = "About to be zeused by an enemy.",
     ["Doubletapping"] = "Holding doubletap key and not choking.",
-    ["Defensive"] = "When you break lagcomp with defensive doubletap.",
+    ["Defensive"] = "When you break lagcomp with defensive.",
     ["Terrorist"] = "You are on the terrorist team.",
     ["Counter terrorist"] = "You are on the counter-terrorist team.",
     ["Dormant"] = "All enemies are dormant for you.",
@@ -87,7 +84,7 @@ local menu = {
     move_up_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move up", function() end),
     move_down = ui_new_button("AA", "Anti-aimbot angles", "Move down", function() end),
     move_down_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move down", function() end),
-    delete = ui_new_button("AA", "Anti-aimbot angles", RED.. "Delete", function() end),
+    delete = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Delete", function() end),
     delete_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Delete", function() end),
 
     -- conditions editing screen (1)
@@ -95,9 +92,9 @@ local menu = {
     cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", DEFAULT_CONDITIONS),
     cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
     save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
-    back = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
-    desc1 = ui_new_label("AA", "Anti-aimbot angles", "Unknown."),
-    desc2 = ui_new_label("AA", "Anti-aimbot angles", "Unknown."),
+    back = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
+    desc1 = ui_new_label("AA", "Anti-aimbot angles", " "),
+    desc2 = ui_new_label("AA", "Anti-aimbot angles", " "),
 
     -- preset editing screen (2)
     name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
@@ -118,7 +115,7 @@ local menu = {
     roll = ui_new_slider("AA", "Anti-aimbot angles", "Roll", -50, 50, 0, true, "°"),
     force_defensive = ui_new_checkbox("AA", "Anti-aimbot angles", "Force defensive"),
     next = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Next", function() end),
-    back2 = ui_new_button("AA", "Anti-aimbot angles", RED.. "Back", function() end),
+    back2 = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
 
     -- other
     config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
@@ -295,6 +292,8 @@ end
 
 local function update_cond_description(condition)
     if not condition then
+        ui_set_visible(menu.desc1, false)
+        ui_set_visible(menu.desc2, false)
         return
     end
 
@@ -312,7 +311,9 @@ local function update_cond_description(condition)
         len = len + #s_
     end
 
+    ui_set_visible(menu.desc1, #desc1 > 1)
     ui_set(menu.desc1, LIGHTGRAY.. desc1)
+    ui_set_visible(menu.desc2, #desc2 > 1)
     ui_set(menu.desc2, LIGHTGRAY.. desc2)
 end
 
@@ -404,6 +405,46 @@ local function is_defensive_active(local_player)
     return defensive_until > tickcount
 end
 
+local function is_knifeable(origin, enemies)
+    local knife_range = 128 -- Its actually 64 but thats too small of a range
+
+    for _,v in ipairs(enemies) do
+        local weapon = entity_get_player_weapon(v)
+        local weapon_class = entity_get_classname(weapon)
+
+        if weapon_class == "CKnife" then
+            local enemy_origin = vector(entity_get_origin(v))
+            local dist = origin:dist(enemy_origin)
+
+            if dist <= knife_range then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+local function is_zeusable(origin, enemies)
+    local taser_range = 230 -- 193 is the largest needed to one shot you
+    
+    for _,v in ipairs(enemies) do
+        local weapon = entity_get_player_weapon(v)
+        local weapon_class = entity_get_classname(weapon)
+
+        if weapon_class == "CWeaponTaser" then
+            local enemy_origin = vector(entity_get_origin(v))
+            local dist = origin:dist(enemy_origin)
+
+            if dist <= knife_range then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 local last_origin, on_ground_ticks = vector(0,0,0), 0
 local function get_conditions(cmd, local_player)
     local velocity = {entity_get_prop(local_player, "m_vecVelocity")}
@@ -415,8 +456,9 @@ local function get_conditions(cmd, local_player)
     local origin = vector(entity_get_origin(local_player))
     local breaking_lc = (last_origin - origin):length2dsqr() > 4096
     local threat = client_current_threat()
-    local pitch_to_threat = 0
     local height_to_threat = 0
+    local vulnerable = is_vulnerable()
+    local enemies = entity_get_players(true)
 
     on_ground_ticks = on_ground and on_ground_ticks + 1 or 0
     
@@ -426,7 +468,6 @@ local function get_conditions(cmd, local_player)
 
     if threat then
         local threat_origin = vector(entity_get_origin(threat))
-        pitch_to_threat = origin:to(threat_origin):angles()
         height_to_threat = origin.z-threat_origin.z
     end
 
@@ -437,18 +478,20 @@ local function get_conditions(cmd, local_player)
         ["Moving"] = speed >= 2,
         ["On ground"] = on_ground_ticks > 1,
         ["In air"] = on_ground_ticks <= 1,
-        ["On peek"] = vulnerable_ticks > 0 and vulnerable_ticks <= 14,
+        ["On peek"] = vulnerable and vulnerable_ticks <= 14,
         ["Breaking LC"] = breaking_lc,
         ["Height advantage"] = threat and height_to_threat > 25,
         ["Height disadvantage"] = threat and height_to_threat < -25,
-        ["Vulnerable"] = is_vulnerable(),
+        ["Vulnerable"] = vulnerable,
         ["Not crouching"] = duck_amount < 0.9,
         ["Crouching"] = duck_amount >= 0.9,
+        ["Knifeable"] = is_knifeable(origin, enemies),
+        ["Zeusable"] = is_zeusable(origin, enemies),
         ["Doubletapping"] = ui_get(references.double_tap) and ui_get(references.double_tap_key) and cmd.chokedcommands <= ui_get(references.double_tap_lag),
         ["Defensive"] = is_defensive_active(local_player),
         ["Terrorist"] = team_num == 2,
         ["Counter terrorist"] = team_num == 3,
-        ["Dormant"] = #entity_get_players(true) == 0,
+        ["Dormant"] = #enemies == 0,
         ["Round end"] = entity_get_prop(entity_get_game_rules(), "m_iRoundWinStatus") ~= 0 and get_total_enemies() == 0
     }
 
@@ -488,9 +531,11 @@ end
 
 local function add_condition(name, desc, func)
     name = tostring(name)
+    
     assert(#name > 0 and name ~= "nil", "The condition must have a name.")
     assert(type(desc) == "string" and #desc > 0, "The condition must have a description.")
     assert(type(func) == "function", "You must add a function to the condition.")
+    assert(not includes(CONDITIONS, name) and not includes(custom_conditions, name), "That condition already exists.")
 
     custom_conditions[#custom_conditions+1] = name
     custom_descriptions[name] = desc
@@ -517,10 +562,8 @@ local function load_config()
         end
     end
 
-
     update_visibility(0)
     set_references_visibility(false)
-    ui_set(menu.browser, 0)
 end
 
 local function on_init()
