@@ -1,6 +1,11 @@
+-- I usually skip writing comments and Im not very good at them, so sorry if they are unclear at times :/
+-- Im forcing myself to write them because this is open sourced and other people can look at this code
+
+-- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
 local VERSION = "1.5"
 
+-- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
 local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.curtime, globals.tickcount, globals.maxplayers
 local json_stringify, json_parse = json.stringify, json.parse
@@ -11,11 +16,13 @@ local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
 local error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat = client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat
 local database_read, database_write = database.read, database.write
-local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile
+local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert
 
+-- Libraries
 local vector = require("vector")
 local http = nil
 
+-- If the auto updater is disabled, then dont bother checking for the http library
 if ENABLE_AUTOUPDATER then
     if not pcall(require, "gamesense/http") then
         error_log("The HTTP library is needed for the autoupdater to work.")
@@ -24,7 +31,10 @@ if ENABLE_AUTOUPDATER then
     end
 end
 
+-- Menu color hex codes. '\aRRGGBBAA'
 local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED = "\aFFFFFFE1", "\aAFAFAFE1", "\a646464E1", "\aAFFFAFE1", "\aFFFF96E1", "\aFFAFAFE1"
+
+-- All of the current conditions and their descriptions
 local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Warm up", "Pre-round", "Round end"}
 local DESCRIPTIONS = {
     ["Always"] = "Always true.",
@@ -52,15 +62,26 @@ local DESCRIPTIONS = {
     ["Round end"] = "The round is over and there are no enemies."
 }
 
+-- Will turn to true if an update is availablle on github
 local update_available = false
+
+-- Storage for custom conditions
 local custom_conditions = {}
 local custom_descriptions = {}
 local custom_funcs = {}
-local screen = 0
+
+-- Block data
 local blocks = {}
 local new_block = false
 local current_block = nil
 
+local vulnerable_ticks = 0
+local last_sim_time = 0
+local defensive_until = 0
+local last_origin = vector(0, 0, 0)
+local on_ground_ticks = 0
+
+-- A list of needed menu references
 local references = {
     fake_lag_limit = ui_reference("AA", "Fake lag", "Limit"),
     slow_motion = ui_reference("AA", "Other", "Slow motion"),
@@ -87,8 +108,10 @@ local references = {
     freestanding_key = select(2, ui_reference("AA", "Anti-aimbot angles", "Freestanding")),
 }
 
+-- A list of created menu elements
+-- (x) is the page that it appears on
 local menu = {
-    -- main screen (0)
+    -- Main screen (0)
     browser = ui_new_listbox("AA", "Anti-aimbot angles", "browser", blocks),
     new = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "New", function() end),
     edit = ui_new_button("AA", "Anti-aimbot angles", "Edit", function() end),
@@ -105,7 +128,7 @@ local menu = {
     download = ui_new_button("AA", "Anti-aimbot angles", "Download update", function() end),
     ignore = ui_new_button("AA", "Anti-aimbot angles", "Ignore", function() end),
 
-    -- conditions editing screen (1)
+    -- Conditions editing screen (1)
     cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
     cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", DEFAULT_CONDITIONS),
     cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
@@ -114,7 +137,7 @@ local menu = {
     desc1 = ui_new_label("AA", "Anti-aimbot angles", " "),
     desc2 = ui_new_label("AA", "Anti-aimbot angles", " "),
 
-    -- preset editing screen (2)
+    -- Preset editing screen (2)
     name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
     name = ui_new_textbox("AA", "Anti-aimbot angles", "\nBlock name"),
     pitch = ui_new_combobox("AA", "Anti-aimbot angles", "Pitch", {"Off", "Default", "Up", "Down", "Minimal", "Random"}),
@@ -135,10 +158,15 @@ local menu = {
     next = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Next", function() end),
     back2 = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
 
-    -- other
+    -- Other (either always visible or never visible)
     config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
 }
 
+-- Returns true if a table contains a certain value
+-- Does not work with key:pair tables
+--- @param tab table The table we want to search
+--- @param val any The value we want to search for
+--- @return boolean boolean Returns true if the table contains the given value
 local function includes(tab, val)
     for i,v in ipairs(tab) do
         if v == val then
@@ -149,11 +177,21 @@ local function includes(tab, val)
     return false
 end
 
+--- @class Block
+--- @field name string The name of the block that appears in the menu
+--- @field enabled string False if the block should be ignored when running anti-aim
+--- @field conditions table A table of conditions that are checked before the anti-aim is activated
+--- @field cond_type string AND when all conditions must be true, OR when only 1 condition must be true
+--- @field force_defensive bool True when cmd.force_defensive should be set to 1 when the block is active
+--- @field settings table A table of settings that should have corresponding anti-aim references
 local Block = {}
 do
     Block.__index = Block
     local Block_mt = {}
 
+    --- @param name string The name of the block that appears in the menu
+    --- @param import_from_menu boolean Should the block be initialized with menu references instead of default values
+    --- @return Block self Returns a Block object
     function Block.new(name, import_from_menu)
         local self = setmetatable({}, Block)
 
@@ -178,6 +216,7 @@ do
             roll = 0
         }
 
+        -- If we import settings from the menu, change the name to 'Gamesense'
         if import_from_menu then
             self.name = "Gamesense"
             for k in pairs(self.settings) do
@@ -188,11 +227,18 @@ do
         return self
     end
 
+    -- This can break with future updates.
+    --- TODO: Validate that a block contains all of its needed fields.
+    --- @param tab table A block object that is not a block. Sounds confusing cuz it is.
+    --- @return Block self Returns a Block object
     function Block.to_block(tab)
         local self = setmetatable(tab, Block)
         return self
     end
 
+    -- Adds/Removes a condition from a blocks list of conditions
+    --- @param cond string The condition that should be toggled.
+    --- @return nil
     function Block:toggle_condition(cond)
         if includes(self.conditions, cond) then
             for i,v in ipairs(self.conditions) do
@@ -205,10 +251,13 @@ do
         end
     end
 
+    --- @param local_conditions table A list of the local players active conditions
+    --- @return boolean boolean Returns true if a Blocks conditions have been met
     function Block:conditions_met(local_conditions)
         local conditions = self.conditions
         local logic = self.cond_type
 
+        -- If there are no conditions, don't bother checking
         if #conditions == 0 then
             return false
         end
@@ -234,6 +283,9 @@ do
         return false
     end
 
+    -- Updates a blocks values
+    -- Does not update conditions or enabled. These are done in different functions.
+    --- @return nil
     function Block:update()
         self.name = ui_get(menu.name)
         self.cond_type = ui_get(menu.cond_type)
@@ -244,9 +296,14 @@ do
         end
     end
 
+    -- Sets the menus anti-aim settings to the blocks settings
+    --- @param cmd userdata setup_commands arguement table
+    --- @return nil
     function Block:set_antiaim(cmd)
         for k,v in pairs(self.settings) do
             local ref = references[k]
+
+            -- Freestanding is special because we have a seperate hotkey to activate it.
             if ref and k ~= "freestanding" then
                 ui_set(ref, v)
             elseif k == "freestanding" then
@@ -259,13 +316,20 @@ do
         end
     end
 
+    --- @param _ nil ignore this
+    --- @param ... any The arguements used in Block.new
+    --- @return Block Block a block object
     function Block_mt.__call(_, ...)
         return Block.new(...)
     end
 
+    -- Set Block_mt as a metatable for Block
     setmetatable(Block, Block_mt)
 end
 
+-- Sets all of the given menu references to a certain visibility
+--- @param ... number Every arg except the last one should be a menu reference. The last one should be a boolean
+--- @return nil
 local function set_table_visibility(...)
     local args = {...}
     local bool = args[#args]
@@ -275,10 +339,16 @@ local function set_table_visibility(...)
     end
 end
 
+-- Sets all of the anti-aim settings to a given visibility
+--- @param b boolean Menu reference visibility
+--- @return nil
 local function set_references_visibility(b)
     set_table_visibility(references.pitch, references.yaw_base, references.yaw, references.yaw_val, references.jitter, references.jitter_val, references.body, references.body_val, references.freestand_body, references.fake_limit, references.roll, references.edge_yaw, references.freestanding, references.freestanding_key, b)
 end
 
+-- Displays all of the current blocks in the main listbox
+-- Disabled blocks will appear grayed out
+--- @return nil
 local function update_browser()
     local display = {}
     local num = 1
@@ -290,7 +360,12 @@ local function update_browser()
     ui_update(menu.browser, display)
 end
 
+-- Displays all of the conditions. 
+-- Custom conditions will have a [c] prefix.
+-- Disabled conditions will appear grayed out.
+--- @return nil
 local function update_cond_browser()
+    -- We can't check the conditions of a block if there isnt a block
     if not current_block then
         return
     end
@@ -308,6 +383,9 @@ local function update_cond_browser()
     ui_update(menu.cond_browser, display)
 end
 
+-- Sets the 2 description labels according to the given conditions description
+--- @param condition string The condition that we want the description of
+--- @return nil
 local function update_cond_description(condition)
     if not condition then
         ui_set_visible(menu.desc1, false)
@@ -319,6 +397,7 @@ local function update_cond_description(condition)
     local desc1, desc2 = "", ""
     local len = 0
     
+    -- If the description is longer than 30 characters, split it into 2 lines to help with readability
     for s in description:gmatch("%S+") do
         local s_ = s.. " "
         if len + #s_ <= 30 then
@@ -335,6 +414,8 @@ local function update_cond_description(condition)
     ui_set(menu.desc2, LIGHTGRAY.. desc2)
 end
 
+-- Sets all of the menu settings to the current blocks settings
+--- @return nil
 local function update_values()
     if not current_block then
         return
@@ -351,6 +432,9 @@ local function update_values()
     update_cond_browser()
 end
 
+-- Updates the visibility of the created menu references
+--- @param s number The screen that we want to show. [0-2]
+--- @return nil
 local function update_visibility(s)
     local browser = ui_get(menu.browser)
 
@@ -386,7 +470,7 @@ local function update_visibility(s)
     update_browser()
 end
 
-local vulnerable_ticks = 0
+--- @return boolean boolean Returns true if the player can be hit by an enemy
 local function is_vulnerable()
     for _, v in ipairs(entity_get_players(true)) do
         local flags = (entity_get_esp_data(v)).flags
@@ -397,21 +481,27 @@ local function is_vulnerable()
         end
     end
 
+    -- If we aren't vulnerable then we have been vulnerable for 0 ticks
     vulnerable_ticks = 0
     return false
 end
 
+--- @return number count The number of alive enemies
 local function get_total_enemies()
     local count = 0
+
     for e = 1, globals_maxplayers() do
         if entity_get_prop(entity_get_player_resource(), "m_bConnected", e) and entity_is_enemy(e) and entity_is_alive(e) then
             count = count + 1
         end
     end
+
     return count
 end
 
-local last_sim_time, defensive_until = 0, 0
+-- I got help from JustiNN?id=1984 with this function. All credit goes to him
+--- @param local_player number The entindex of the local player
+--- @return boolean boolean Returns true if defensive dt is currently active
 local function is_defensive_active(local_player)
     local tickcount = globals_tickcount()
     local sim_time = toticks(entity_get_prop(local_player, "m_flSimulationTime"))
@@ -426,6 +516,9 @@ local function is_defensive_active(local_player)
     return defensive_until > tickcount
 end
 
+--- @param origin vector A vector of the local players origin
+--- @param enemies table A list of entindexes
+--- @return boolean boolean Returns true if the local player is under the threat of being knifed
 local function is_knifeable(origin, enemies)
     local knife_range = 128 -- Its actually 64 but thats too small of a range
 
@@ -446,6 +539,9 @@ local function is_knifeable(origin, enemies)
     return false
 end
 
+--- @param origin vector A vector of the local players origin
+--- @param enemies table A list of entindexes
+--- @return boolean boolean Returns true if the local player is under the threat of being zeused
 local function is_zeusable(origin, enemies)
     local taser_range = 230 -- 193 is the largest needed to one shot you
     
@@ -466,7 +562,10 @@ local function is_zeusable(origin, enemies)
     return false
 end
 
-local last_origin, on_ground_ticks = vector(0,0,0), 0
+-- Gets all of the possible conditions and calculated whether or not they are active
+--- @param cmd userdata setup_commands arguement table
+--- @param local_player number the entindex of the local player
+--- @return table conditions a key:value table of conditions and whether or not they are active
 local function get_conditions(cmd, local_player)
     local game_rules = entity_get_game_rules()
     local velocity = {entity_get_prop(local_player, "m_vecVelocity")}
@@ -527,6 +626,10 @@ local function get_conditions(cmd, local_player)
     return conds
 end
 
+-- Searches through all of the blocks to find one where its conditions are met, then sets the anti-aim settings to the blocks settings
+--- @param cmd userdata setup_commands arguement table
+--- @param local_conditions table a key:value table of local player conditions
+--- @return nil
 local function run_antiaim(cmd, local_conditions)
     if screen == 1 then
         current_block:update()
@@ -535,7 +638,7 @@ local function run_antiaim(cmd, local_conditions)
         for i,block in ipairs(blocks) do
             if (block:conditions_met(local_conditions) or i == #blocks) and block.enabled then
                 block:set_antiaim(cmd)
-                break
+                break -- bad coding practice but it works so Im not changing it
             end
         end
     end
@@ -543,7 +646,10 @@ local function run_antiaim(cmd, local_conditions)
     set_references_visibility(false)
 end
 
+-- Runs every game tick
+--- @param cmd userdata setup_commands arguement table
 local function on_setup_command(cmd)
+    -- Prevent unneeded calculations for that $ performance boost $
     if not ui_get(references.enabled) then
         return
     end
@@ -554,9 +660,16 @@ local function on_setup_command(cmd)
     run_antiaim(cmd, local_conditions)
 end
 
+-- Adds a custom condition to the menu
+--- @param name string The name of the condition
+--- @param desc string A short description of the condition
+--- @param func function A function that determines whether or not the condition is active. Should return a boolean.
+--- @return nil
 local function add_condition(name, desc, func)
+    -- make sure that the name becomes a key instead of an index
     name = tostring(name)
     
+    -- Make sure the condition is set up correctly
     assert(#name > 0 and name ~= "nil", "The condition must have a name.")
     assert(type(desc) == "string" and #desc > 0, "The condition must have a description.")
     assert(type(func) == "function", "You must add a function to the condition.")
@@ -567,15 +680,21 @@ local function add_condition(name, desc, func)
     custom_funcs[name] = func
 end
 
+-- Saves the current block table to a menu reference
+--- @return nil
 local function save_config()
     ui_set(menu.config, tostring(json_stringify(blocks)))
 end
 
+-- Loads a config from the config menu reference
+-- If there is no config, then create a config with a default block
+--- @return nil
 local function load_config()
     local json_cfg = ui_get(menu.config)
     current_block = nil
     blocks = {}
     
+    -- '{}' is the default and the cfg should only be {} when the lua is first loaded
     if json_cfg == "{}" then
         blocks[#blocks+1] = Block("Default", true)
         save_config()
@@ -591,6 +710,8 @@ local function load_config()
     set_references_visibility(false)
 end
 
+-- Calls when the lua is first loaded
+--- @return nil
 local function on_init()
     client_set_event_callback("setup_command", on_setup_command)
     client_set_event_callback("pre_config_save", save_config)
@@ -601,6 +722,7 @@ local function on_init()
         database_write("new_aa_cache", {globals_realtime(), blocks})
     end)
 
+    -- Minimized because less lines of code = better
     ui_set_callback(menu.new, function() new_block = true; current_block = Block(); update_values(); update_visibility(1) end)
     ui_set_callback(menu.edit, function() new_block = false; current_block = blocks[ui_get(menu.browser)+1]; update_values(); update_visibility(1) end)
     ui_set_callback(menu.toggle, function() blocks[ui_get(menu.browser)+1].enabled = not blocks[ui_get(menu.browser)+1].enabled; update_browser() end)
@@ -685,6 +807,9 @@ local function on_init()
 
     local cache = database_read("new_aa_cache")
 
+    -- If the lua was reloaded, it will have been unloaded for 0 seconds
+    -- We can use this to cache the block table between lua loads because tables are deleted on unload
+    -- If the lua wasnt reloaded, call the load_config function to load blocks to the menu
     if cache and globals_realtime() - cache[1] == 0 then
         for i,v in ipairs(cache[2]) do
             blocks[#blocks+1] = Block.to_block(v)
@@ -696,30 +821,37 @@ local function on_init()
     set_references_visibility(false)
     update_visibility(0)
 
+    -- If the auto updater is off or the user is not subscribed to the http library, do not run the autoupdater
+    -- I could be using coroutines for this as its async but I don't really feel like it
     if ENABLE_AUTOUPDATER and http then
-        ui_set_callback(menu.ignore, function()
-            update_available = false
-            update_visibility()
-        end)
-
-        ui_set_callback(menu.download, function()
-            http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder.lua", function(success, response)
-                if success and response.status == 200 then
-                    local body = response.body
-                    local name = _NAME
-
-                    writefile(_NAME..".lua", body)
-                    client_reload_active_scripts()
-                end
-            end)
-        end)
-
+        -- Checks for an update on the github and sets the download button visible if there is one
         http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder_version.txt", function(success, response)
             if success and response.status == 200 then
                 local cloud_version = response.body
                 cloud_version = cloud_version:gsub("\n$", "")
 
                 if cloud_version ~= VERSION then
+                    -- Ignore the update until the lua is loaded next
+                    ui_set_callback(menu.ignore, function()
+                        update_available = false
+                        update_visibility()
+                    end)
+
+                    -- Overwrite the current lua with the new lua from github
+                    -- Breaks if the lua is loaded as a module from a folder :(
+                    ui_set_callback(menu.download, function()
+                        http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder.lua", function(success, response)
+                            if success and response.status == 200 then
+                                local body = response.body
+                                local name = _NAME
+
+                                writefile(_NAME..".lua", body)
+                                client_reload_active_scripts()
+                            end
+                        end)
+                    end)
+
+                    -- An update is available so set the update label, download button and ignore button to visible
                     update_available = true
                     ui_set(menu.updater_label, string_format("%sVersion %s%s%s is available to download.", LIGHTGRAY, GREEN, cloud_version, LIGHTGRAY))
                     update_visibility()
@@ -729,6 +861,7 @@ local function on_init()
     end
 end
 
+-- Initiate the lua
 on_init()
 
 return add_condition
