@@ -179,7 +179,7 @@ end
 
 --- @class Block
 --- @field name string The name of the block that appears in the menu
---- @field enabled string False if the block should be ignored when running anti-aim
+--- @field enabled boolean False if the block should be ignored when running anti-aim
 --- @field conditions table A table of conditions that are checked before the anti-aim is activated
 --- @field cond_type string AND when all conditions must be true, OR when only 1 condition must be true
 --- @field force_defensive bool True when cmd.force_defensive should be set to 1 when the block is active
