@@ -3,7 +3,7 @@
 
 -- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
-local VERSION = "1.5"
+local VERSION = "1.6"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
@@ -14,9 +14,9 @@ local string_format, string_rep = string.format, string.rep
 local math_abs, math_sqrt = math.abs, math.sqrt
 local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
-local error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat = client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat
+local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex
 local database_read, database_write = database.read, database.write
-local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert
+local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
 
 -- Libraries
 local vector = require("vector")
@@ -32,7 +32,7 @@ if ENABLE_AUTOUPDATER then
 end
 
 -- Menu color hex codes. '\aRRGGBBAA'
-local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED = "\aFFFFFFE1", "\aAFAFAFE1", "\a646464E1", "\aAFFFAFE1", "\aFFFF96E1", "\aFFAFAFE1"
+local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED, RED = "\aFFFFFFE1", "\aAFAFAFE1", "\a646464E1", "\aAFFFAFE1", "\aFFFF96E1", "\aFFAFAFE1", "\aFF8080E1"
 
 -- All of the current conditions and their descriptions
 local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Warm up", "Pre-round", "Round end"}
@@ -62,7 +62,7 @@ local DESCRIPTIONS = {
     ["Round end"] = "The round is over and there are no enemies."
 }
 
--- Will turn to true if an update is availablle on github
+-- Will be set to true if an update is availablle on github
 local update_available = false
 
 -- Storage for custom conditions
@@ -74,7 +74,13 @@ local custom_funcs = {}
 local blocks = {}
 local new_block = false
 local current_block = nil
+local active_block = nil
+local fatal_block = nil
 
+-- Current visible menu screen
+local screen = 0
+
+-- Condition data
 local vulnerable_ticks = 0
 local last_sim_time = 0
 local defensive_until = 0
@@ -133,7 +139,8 @@ local menu = {
     cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", DEFAULT_CONDITIONS),
     cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
     save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
-    back = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
+    back_saved = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Back", function() end),
+    back_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
     desc1 = ui_new_label("AA", "Anti-aimbot angles", " "),
     desc2 = ui_new_label("AA", "Anti-aimbot angles", " "),
 
@@ -156,7 +163,8 @@ local menu = {
     roll = ui_new_slider("AA", "Anti-aimbot angles", "Roll", -50, 50, 0, true, "°"),
     force_defensive = ui_new_checkbox("AA", "Anti-aimbot angles", "Force defensive"),
     next = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Next", function() end),
-    back2 = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
+    back2_saved = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Back", function() end),
+    back2_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
 
     -- Other (either always visible or never visible)
     config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
@@ -195,7 +203,7 @@ do
     function Block.new(name, import_from_menu)
         local self = setmetatable({}, Block)
 
-        self.name = name or ""
+        self.name = name or "unknown"
         self.enabled = true
         self.conditions = {}
         self.cond_type = "AND"
@@ -227,18 +235,36 @@ do
         return self
     end
 
-    -- This can break with future updates.
-    --- TODO: Validate that a block contains all of its needed fields.
+    -- Copies a 'deblockified' block object into a block object
+    -- Ill eventually update this to suck less
     --- @param tab table A block object that is not a block. Sounds confusing cuz it is.
     --- @return Block self Returns a Block object
     function Block.to_block(tab)
-        local self = setmetatable(tab, Block)
-        return self
+        -- Create a block object to use as a base
+        local base = Block.new(tab.name or "Default")
+
+        for k,v in pairs(base) do
+            -- If there is a matching field in the tab table and they are of the same type
+            -- set the base blocks value to the tabs value
+            -- If the value is another table, do the same process on that table
+            if tab[k] ~= nil and type(tab[k]) == type(v) then
+                if type(v) == "table" then
+                    for _k,_v in pairs(v) do
+                        if tab[k][_k] ~= nil and type(tab[k][_k]) == type(_v) then
+                            base[k][_k] = tab[k][_k]
+                        end
+                    end
+                else
+                    base[k] = tab[k]
+                end
+            end
+        end
+
+        return base
     end
 
     -- Adds/Removes a condition from a blocks list of conditions
     --- @param cond string The condition that should be toggled.
-    --- @return nil
     function Block:toggle_condition(cond)
         if includes(self.conditions, cond) then
             for i,v in ipairs(self.conditions) do
@@ -285,7 +311,6 @@ do
 
     -- Updates a blocks values
     -- Does not update conditions or enabled. These are done in different functions.
-    --- @return nil
     function Block:update()
         self.name = ui_get(menu.name)
         self.cond_type = ui_get(menu.cond_type)
@@ -298,7 +323,6 @@ do
 
     -- Sets the menus anti-aim settings to the blocks settings
     --- @param cmd userdata setup_commands arguement table
-    --- @return nil
     function Block:set_antiaim(cmd)
         for k,v in pairs(self.settings) do
             local ref = references[k]
@@ -314,6 +338,9 @@ do
         if self.force_defensive then
             cmd.force_defensive = 1
         end
+
+        -- For statistical use
+        active_block = self
     end
 
     --- @param _ nil ignore this
@@ -328,32 +355,34 @@ do
 end
 
 -- Sets all of the given menu references to a certain visibility
---- @param ... number Every arg except the last one should be a menu reference. The last one should be a boolean
---- @return nil
-local function set_table_visibility(...)
+--- @param b boolean The visibility of each reference in the table
+--- @param ... number Every arg except the last one should be a menu reference.
+local function set_table_visibility(b, ...)
     local args = {...}
-    local bool = args[#args]
 
-    for i = 1, #args-1 do
-        ui_set_visible(args[i], bool)
+    for i,v in ipairs(args) do
+        ui_set_visible(v, b)
     end
 end
 
 -- Sets all of the anti-aim settings to a given visibility
 --- @param b boolean Menu reference visibility
---- @return nil
 local function set_references_visibility(b)
-    set_table_visibility(references.pitch, references.yaw_base, references.yaw, references.yaw_val, references.jitter, references.jitter_val, references.body, references.body_val, references.freestand_body, references.fake_limit, references.roll, references.edge_yaw, references.freestanding, references.freestanding_key, b)
+    set_table_visibility(b, references.pitch, references.yaw_base, references.yaw, 
+        references.yaw_val, references.jitter, references.jitter_val, 
+        references.body, references.body_val, references.freestand_body, 
+        references.fake_limit, references.roll, references.edge_yaw, 
+        references.freestanding, references.freestanding_key
+    )
 end
 
 -- Displays all of the current blocks in the main listbox
 -- Disabled blocks will appear grayed out
---- @return nil
 local function update_browser()
     local display = {}
     local num = 1
     for i,v in ipairs(blocks) do
-        display[#display+1] = v.enabled and string_format("%s[%i] %s%s", LIGHTGRAY, num, WHITE, v.name) or string_format("%s[  ] %s%s", LIGHTGRAY, GRAY, v.name)
+        display[#display+1] = v.enabled and string_format("%s[%i] %s%s", fatal_block == v and RED or LIGHTGRAY, num, WHITE, v.name) or string_format("%s[  ] %s%s", LIGHTGRAY, GRAY, v.name)
         num = v.enabled and num+1 or num
     end
 
@@ -363,7 +392,6 @@ end
 -- Displays all of the conditions. 
 -- Custom conditions will have a [c] prefix.
 -- Disabled conditions will appear grayed out.
---- @return nil
 local function update_cond_browser()
     -- We can't check the conditions of a block if there isnt a block
     if not current_block then
@@ -376,6 +404,7 @@ local function update_cond_browser()
         display[#display+1] = string_format("%s%s", includes(current_block.conditions, v) and WHITE or GRAY, v)
     end
 
+    -- Give custom conditions a prefix so users know they are custom
     for _,v in ipairs(custom_conditions) do
         display[#display+1] = string_format("%s[c] %s%s", YELLOW, includes(current_block.conditions, v) and WHITE or GRAY, v)
     end
@@ -385,7 +414,6 @@ end
 
 -- Sets the 2 description labels according to the given conditions description
 --- @param condition string The condition that we want the description of
---- @return nil
 local function update_cond_description(condition)
     if not condition then
         ui_set_visible(menu.desc1, false)
@@ -415,7 +443,6 @@ local function update_cond_description(condition)
 end
 
 -- Sets all of the menu settings to the current blocks settings
---- @return nil
 local function update_values()
     if not current_block then
         return
@@ -434,7 +461,6 @@ end
 
 -- Updates the visibility of the created menu references
 --- @param s number The screen that we want to show. [0-2]
---- @return nil
 local function update_visibility(s)
     local browser = ui_get(menu.browser)
 
@@ -442,7 +468,7 @@ local function update_visibility(s)
         screen = s
     end
 
-    set_table_visibility(menu.browser, menu.new, screen == 0)
+    set_table_visibility(screen == 0, menu.browser, menu.new)
     ui_set_visible(menu.edit, screen == 0 and browser)
     ui_set_visible(menu.edit_inactive, screen == 0 and not browser)
     ui_set_visible(menu.toggle, screen == 0 and browser)
@@ -457,15 +483,21 @@ local function update_visibility(s)
     ui_set_visible(menu.download, screen == 0 and update_available)
     ui_set_visible(menu.ignore, screen == 0 and update_available)
 
-    set_table_visibility(menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.back, menu.desc1, menu.desc2, screen == 2)
+    set_table_visibility(screen == 2, menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.desc1, menu.desc2)
+    ui_set_visible(menu.back_saved, screen == 2 and not new_block)
+    ui_set_visible(menu.back_unsaved, screen == 2 and new_block)
 
-    set_table_visibility(menu.name_label, menu.name, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.fake_limit, menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll, menu.force_defensive, menu.next, menu.back2, screen == 1)
+    set_table_visibility(screen == 1, menu.name_label, menu.name, menu.pitch, menu.yaw_base, menu.yaw, menu.body, menu.fake_limit, 
+        menu.edge_yaw, menu.freestanding, menu.freestanding_key, menu.roll, menu.force_defensive, menu.next
+    )
     ui_set_visible(menu.yaw_val, screen == 1 and ui_get(menu.yaw) ~= "Off")
     ui_set_visible(menu.jitter, screen == 1 and ui_get(menu.yaw) ~= "Off")
     ui_set_visible(menu.jitter_val, screen == 1 and ui_get(menu.yaw) ~= "Off" and ui_get(menu.jitter) ~= "Off")
     ui_set_visible(menu.body_val, screen == 1 and ui_get(menu.body) ~= "Off" and ui_get(menu.body) ~= "Opposite")
     ui_set_visible(menu.freestand_body, screen == 1 and ui_get(menu.body) ~= "Off")
     ui_set_visible(menu.fake_limit, screen == 1 and ui_get(menu.body) ~= "Off")
+    ui_set_visible(menu.back2_saved, screen == 1 and not new_block)
+    ui_set_visible(menu.back2_unsaved, screen == 1 and new_block)
 
     update_browser()
 end
@@ -581,6 +613,8 @@ local function get_conditions(cmd, local_player)
     local vulnerable = is_vulnerable()
     local enemies = entity_get_players(true)
     local curtime = globals_curtime()
+    local doubletapping = ui_get(references.double_tap) and ui_get(references.double_tap_key)
+    local slowwalking =  ui_get(references.slow_motion) and ui_get(references.slow_motion_key)
 
     on_ground_ticks = on_ground and on_ground_ticks + 1 or 0
     
@@ -596,7 +630,7 @@ local function get_conditions(cmd, local_player)
     local conds = {
         ["Always"] = true,
         ["Not moving"] = speed < 2,
-        ["Slow motion"] = ui_get(references.slow_motion) and ui_get(references.slow_motion_key) and speed >= 2,
+        ["Slow motion"] = slowwalking and speed >= 2,
         ["Moving"] = speed >= 2,
         ["On ground"] = on_ground_ticks > 1,
         ["In air"] = on_ground_ticks <= 1,
@@ -609,7 +643,7 @@ local function get_conditions(cmd, local_player)
         ["Crouching"] = duck_amount >= 0.9,
         ["Knifeable"] = is_knifeable(origin, enemies),
         ["Zeusable"] = is_zeusable(origin, enemies),
-        ["Doubletapping"] = ui_get(references.double_tap) and ui_get(references.double_tap_key) and cmd.chokedcommands <= ui_get(references.double_tap_lag),
+        ["Doubletapping"] = doubletapping and cmd.chokedcommands <= ui_get(references.double_tap_lag),
         ["Defensive"] = is_defensive_active(local_player),
         ["Terrorist"] = team_num == 2,
         ["Counter terrorist"] = team_num == 3,
@@ -629,7 +663,6 @@ end
 -- Searches through all of the blocks to find one where its conditions are met, then sets the anti-aim settings to the blocks settings
 --- @param cmd userdata setup_commands arguement table
 --- @param local_conditions table a key:value table of local player conditions
---- @return nil
 local function run_antiaim(cmd, local_conditions)
     if screen == 1 then
         current_block:update()
@@ -660,11 +693,24 @@ local function on_setup_command(cmd)
     run_antiaim(cmd, local_conditions)
 end
 
+-- Checks which block we had enabled if we died to a headshot
+--- @param e userdata player_death event data
+local function on_player_death(e)
+    if not ui_get(references.enabled) then
+        return
+    end
+
+    local local_player = entity_get_local_player()
+    if client_userid_to_entindex(e.userid) == local_player then
+        fatal_block = active_block
+        update_browser()
+    end
+end
+
 -- Adds a custom condition to the menu
 --- @param name string The name of the condition
 --- @param desc string A short description of the condition
 --- @param func function A function that determines whether or not the condition is active. Should return a boolean.
---- @return nil
 local function add_condition(name, desc, func)
     -- make sure that the name becomes a key instead of an index
     name = tostring(name)
@@ -681,14 +727,12 @@ local function add_condition(name, desc, func)
 end
 
 -- Saves the current block table to a menu reference
---- @return nil
 local function save_config()
     ui_set(menu.config, tostring(json_stringify(blocks)))
 end
 
 -- Loads a config from the config menu reference
 -- If there is no config, then create a config with a default block
---- @return nil
 local function load_config()
     local json_cfg = ui_get(menu.config)
     current_block = nil
@@ -711,11 +755,12 @@ local function load_config()
 end
 
 -- Calls when the lua is first loaded
---- @return nil
 local function on_init()
     client_set_event_callback("setup_command", on_setup_command)
     client_set_event_callback("pre_config_save", save_config)
     client_set_event_callback("post_config_load", load_config)
+
+    client_set_event_callback("player_death", on_player_death)
 
     client_set_event_callback("shutdown", function()
         set_references_visibility(true)
@@ -728,12 +773,15 @@ local function on_init()
     ui_set_callback(menu.toggle, function() blocks[ui_get(menu.browser)+1].enabled = not blocks[ui_get(menu.browser)+1].enabled; update_browser() end)
     ui_set_callback(menu.delete, function() table_remove(blocks, ui_get(menu.browser)+1); update_browser(); if #blocks > 0 then ui_set(menu.browser, ui_get(menu.browser)-1) end; update_visibility(0) end)
     ui_set_callback(menu.next, function() update_visibility(2) end)
-    ui_set_callback(menu.back, function() update_visibility(1) end)
+    ui_set_callback(menu.back_saved, function() update_visibility(1) end)
+    ui_set_callback(menu.back_unsaved, function() update_visibility(1) end)
     ui_set_callback(menu.yaw, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.jitter, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.body, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.save, function() current_block:update(); if new_block then blocks[#blocks+1] = current_block end; current_block = nil; update_visibility(0) end)
-    ui_set_callback(menu.back2, function() update_visibility(0) end)
+    ui_set_callback(menu.back2_saved, function() update_visibility(0) end)
+    ui_set_callback(menu.back2_unsaved, function() update_visibility(0) end)
+
 
     ui_set_callback(menu.cond_toggle, function() 
         if not current_block then
@@ -805,6 +853,7 @@ local function on_init()
         prev_cond_browser = {idx, realtime}
     end)
 
+    -- Read from the luas cache
     local cache = database_read("new_aa_cache")
 
     -- If the lua was reloaded, it will have been unloaded for 0 seconds
