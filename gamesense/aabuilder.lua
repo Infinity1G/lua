@@ -3,10 +3,10 @@
 
 -- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
-local VERSION = "1.6"
+local VERSION = "1.6.1"
 
 -- Cache globals for that $ performance boost $
-local ui_get, ui_set, ui_update, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
+local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
 local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.curtime, globals.tickcount, globals.maxplayers
 local json_stringify, json_parse = json.stringify, json.parse
 local table_remove, table_insert = table.remove, table.insert
@@ -16,6 +16,7 @@ local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
 local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex
 local database_read, database_write = database.read, database.write
+local renderer_indicator = renderer.indicator
 local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
 
 -- Libraries
@@ -167,8 +168,23 @@ local menu = {
     back2_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
 
     -- Other (either always visible or never visible)
+    show_active_block = ui_new_checkbox("AA", "Other", "Display active block"),
+    show_active_block_color = ui_new_color_picker("AA", "Other", "Display active block color", 255, 255, 255, 200),
     config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
 }
+
+-- Tests the run speed of a function and prints the run speed to console
+-- Use this when trying to optimize different functions
+local function test_performance(func_name, func, ...)
+    local start_time = client_timestamp()
+    for i = 1, 1000000 do
+        func(...)
+    end
+    local end_time = client_timestamp()
+    local elapsed = (end_time - start_time) * 0.001 -- timestamps are given in milliseconds
+
+    printf("%s ran in %.3f seconds.", func_name, elapsed)
+end
 
 -- Returns true if a table contains a certain value
 -- Does not work with key:pair tables
@@ -248,15 +264,7 @@ do
             -- set the base blocks value to the tabs value
             -- If the value is another table, do the same process on that table
             if tab[k] ~= nil and type(tab[k]) == type(v) then
-                if type(v) == "table" then
-                    for _k,_v in pairs(v) do
-                        if tab[k][_k] ~= nil and type(tab[k][_k]) == type(_v) then
-                            base[k][_k] = tab[k][_k]
-                        end
-                    end
-                else
-                    base[k] = tab[k]
-                end
+                base[k] = tab[k]
             end
         end
 
@@ -707,6 +715,23 @@ local function on_player_death(e)
     end
 end
 
+-- Calls once every frame
+-- Displays the active anti-aim block if there is one
+local function on_paint()
+    if not ui_get(references.enabled) or not ui_get(menu.show_active_block) then
+        return
+    end
+
+    local local_player = entity_get_local_player()
+
+    if not entity_is_alive(local_player) or not active_block then
+        return
+    end
+
+    local r, g, b, a = ui_get(menu.show_active_block_color)
+    renderer_indicator(r, g, b, a, active_block.name)
+end
+
 -- Adds a custom condition to the menu
 --- @param name string The name of the condition
 --- @param desc string A short description of the condition
@@ -757,6 +782,7 @@ end
 -- Calls when the lua is first loaded
 local function on_init()
     client_set_event_callback("setup_command", on_setup_command)
+    client_set_event_callback("paint", on_paint)
     client_set_event_callback("pre_config_save", save_config)
     client_set_event_callback("post_config_load", load_config)
 
