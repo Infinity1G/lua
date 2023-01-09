@@ -593,7 +593,7 @@ local function is_zeusable(origin, enemies)
             local enemy_origin = vector(entity_get_origin(v))
             local dist = origin:dist(enemy_origin)
 
-            if dist <= knife_range then
+            if dist <= taser_range then
                 return true
             end
         end
