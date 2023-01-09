@@ -3,7 +3,7 @@
 
 -- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
-local VERSION = "1.6.1"
+local VERSION = "1.6.2"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
