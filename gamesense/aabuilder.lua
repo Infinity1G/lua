@@ -3,7 +3,7 @@
 
 -- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
-local VERSION = "1.6.2"
+local VERSION = "1.6.3"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
@@ -39,28 +39,28 @@ local WHITE, LIGHTGRAY, GRAY, GREEN, YELLOW, LIGHTRED, RED = "\aFFFFFFE1", "\aAF
 local CONDITIONS = {"Always", "Not moving", "Moving", "Slow motion", "On ground", "In air", "On peek", "Breaking LC", "Vulnerable", "Crouching", "Not crouching",  "Height advantage", "Height disadvantage", "Knifeable", "Zeusable", "Doubletapping", "Defensive", "Terrorist", "Counter terrorist", "Dormant", "Warm up", "Pre-round", "Round end"}
 local DESCRIPTIONS = {
     ["Always"] = "Always true.",
-    ["Not moving"] = "Horizontal velocity < 2.",
-    ["Moving"] = "Horizontal velocity >= 2.",
-    ["Slow motion"] = "Slow walking and moving.",
-    ["On ground"] = "Touching the ground.",
-    ["In air"] = "Not touching the ground.",
-    ["On peek"] = "First 14 vulnerable ticks.",
-    ["Breaking LC"] = "Breaking lagcomp with fake lag.",
-    ["Vulnerable"] = "Can be shot by enemies.",
-    ["Crouching"] = "Crouching (Not fakeducking).",
-    ["Not crouching"] = "Not crouching.",
-    ["Height advantage"] = "25 HMU above your target.",
-    ["Height disadvantage"] = "25 HMU below your target.",
-    ["Knifeable"] = "About to be knifed by an enemy.",
-    ["Zeusable"] = "About to be zeused by an enemy.",
-    ["Doubletapping"] = "Holding doubletap key and not choking.",
-    ["Defensive"] = "When you break lagcomp with defensive.",
-    ["Terrorist"] = "You are on the terrorist team.",
-    ["Counter terrorist"] = "You are on the counter-terrorist team.",
-    ["Dormant"] = "All enemies are dormant for you.",
-    ["Warm up"] = "Game is in warm up period.",
-    ["Pre-round"] = "Before the round starts.",
-    ["Round end"] = "The round is over and there are no enemies."
+    ["Not moving"] = "True when your horizontal velocity < 2.",
+    ["Moving"] = "True when your horizontal velocity >= 2.",
+    ["Slow motion"] = "True when you are moving and holding your slow walk key.",
+    ["On ground"] = "True when you are touching the ground.",
+    ["In air"] = "True when you are not touching the ground.",
+    ["On peek"] = "True for the first 18 ticks you are vulnerable.",
+    ["Breaking LC"] = "True when you are breaking lagcomp with fakelag.",
+    ["Vulnerable"] = "True when enemies can shoot you.",
+    ["Crouching"] = "True when you are crouching and not fake ducking.",
+    ["Not crouching"] = "True when you are not crouching.",
+    ["Height advantage"] = "True when you are 25 HMU above your anti-aim target.",
+    ["Height disadvantage"] = "True when you are 25 HMU below your anti-aim target.",
+    ["Knifeable"] = "True when you are able to be knifed by an enemy.",
+    ["Zeusable"] = "True when you can be zeused by an enemy.",
+    ["Doubletapping"] = "True when you are holding your doubletap key and not choking.",
+    ["Defensive"] = "True hen you break lagcomp with defensive.",
+    ["Terrorist"] = "True when you are on the terrorist team.",
+    ["Counter terrorist"] = "True when you are on the counter-terrorist team.",
+    ["Dormant"] = "True when all enemies are dormant for you.",
+    ["Warm up"] = "True when the game is in a warm up period.",
+    ["Pre-round"] = "True ~0.5 seconds before a round starts.",
+    ["Round end"] = "True when a round is over and there are no enemies."
 }
 
 -- Will be set to true if an update is availablle on github
@@ -142,8 +142,7 @@ local menu = {
     save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
     back_saved = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Back", function() end),
     back_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
-    desc1 = ui_new_label("AA", "Anti-aimbot angles", " "),
-    desc2 = ui_new_label("AA", "Anti-aimbot angles", " "),
+    descriptions = {},
 
     -- Preset editing screen (2)
     name_label = ui_new_label("AA", "Anti-aimbot angles", "Block name"),
@@ -170,7 +169,7 @@ local menu = {
     -- Other (either always visible or never visible)
     show_active_block = ui_new_checkbox("AA", "Other", "Display active block"),
     show_active_block_color = ui_new_color_picker("AA", "Other", "Display active block color", 255, 255, 255, 200),
-    config = ui_new_string("new_aa_config", "{}") -- if this is a blank string the config system breaks ????
+    config = ui_new_string("new_aa_config", "{}"), -- if this is a blank string the config system breaks ????
 }
 
 -- Tests the run speed of a function and prints the run speed to console
@@ -424,30 +423,44 @@ end
 --- @param condition string The condition that we want the description of
 local function update_cond_description(condition)
     if not condition then
-        ui_set_visible(menu.desc1, false)
-        ui_set_visible(menu.desc2, false)
         return
     end
 
     local description = condition.. ": ".. (DESCRIPTIONS[condition] or custom_descriptions[condition] or "Unknown.")
-    local desc1, desc2 = "", ""
+    local lines = {}
     local len = 0
     
-    -- If the description is longer than 30 characters, split it into 2 lines to help with readability
+    -- If the description is longer than 30 characters, split it into multiple lines to help with readability
+    local idx = 1
     for s in description:gmatch("%S+") do
         local s_ = s.. " "
         if len + #s_ <= 30 then
-            desc1 = desc1.. s_
+            lines[idx] = (lines[idx] or "").. s_
+            len = len + #s_
         else
-            desc2 = desc2.. s_
+            idx = idx + 1
+            lines[idx] = s_
+            len = 0
         end
-        len = len + #s_
     end
 
-    ui_set_visible(menu.desc1, #desc1 > 1)
-    ui_set(menu.desc1, LIGHTGRAY.. desc1)
-    ui_set_visible(menu.desc2, #desc2 > 1)
-    ui_set(menu.desc2, LIGHTGRAY.. desc2)
+    -- Go through our description. If there is not label available to set, create one
+    for i,v in ipairs(lines) do
+        if menu.descriptions[i] then
+            ui_set_visible(menu.descriptions[i], true)
+        else
+            menu.descriptions[#menu.descriptions+1] = ui_new_label("AA", "Anti-aimbot angles", " ")
+        end
+
+        ui_set(menu.descriptions[i], LIGHTGRAY.. v)
+    end
+
+    -- Hide the labels not already in use
+    if #menu.descriptions > #lines then
+        for i = #lines+1, #menu.descriptions do
+            ui_set_visible(menu.descriptions[i], false)
+        end
+    end
 end
 
 -- Sets all of the menu settings to the current blocks settings
@@ -491,7 +504,7 @@ local function update_visibility(s)
     ui_set_visible(menu.download, screen == 0 and update_available)
     ui_set_visible(menu.ignore, screen == 0 and update_available)
 
-    set_table_visibility(screen == 2, menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, menu.desc1, menu.desc2)
+    set_table_visibility(screen == 2, menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, unpack(menu.descriptions))
     ui_set_visible(menu.back_saved, screen == 2 and not new_block)
     ui_set_visible(menu.back_unsaved, screen == 2 and new_block)
 
@@ -642,7 +655,7 @@ local function get_conditions(cmd, local_player)
         ["Moving"] = speed >= 2,
         ["On ground"] = on_ground_ticks > 1,
         ["In air"] = on_ground_ticks <= 1,
-        ["On peek"] = vulnerable and vulnerable_ticks <= 14,
+        ["On peek"] = vulnerable and vulnerable_ticks <= 18,
         ["Breaking LC"] = breaking_lc,
         ["Height advantage"] = threat and height_to_threat > 25,
         ["Height disadvantage"] = threat and height_to_threat < -25,
@@ -896,9 +909,9 @@ local function on_init()
     set_references_visibility(false)
     update_visibility(0)
 
-    -- If the auto updater is off or the user is not subscribed to the http library, do not run the autoupdater
+    -- If the auto updater is off, the build is a dev build, or the user is not subscribed to the http library, do not run the autoupdater
     -- I could be using coroutines for this as its async but I don't really feel like it
-    if ENABLE_AUTOUPDATER and http then
+    if ENABLE_AUTOUPDATER and http and not VERSION:find("d") then
         -- Checks for an update on the github and sets the download button visible if there is one
         http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder_version.txt", function(success, response)
             if success and response.status == 200 then
