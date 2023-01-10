@@ -1,3 +1,9 @@
+-- This lua is licensed under the CC BY-NC 4.0 license.
+-- You may share and change this source code. 
+-- You may NOT sell any derivatives of this source code commercially.
+-- Read more here: 
+-- https://creativecommons.org/licenses/by-nc/4.0/
+
 -- I usually skip writing comments and Im not very good at them, so sorry if they are unclear at times :/
 -- Im forcing myself to write them because this is open sourced and other people can look at this code
 
