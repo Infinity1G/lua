@@ -1,13 +1,12 @@
--- This software is licensed with a GNU General Public 2.0 license.
+-- This software is licensed with GNU GPL 2.0.
 -- Read more here: https://github.com/Infinity1G/lua/blob/main/gamesense/LICENSE
-local LICENSE = "GNU General Public 2.0"
-
--- I usually skip writing comments and Im not very good at them, so sorry if they are unclear at times :/
--- Im forcing myself to write them because this is open sourced and other people can look at this code
+local LICENSE = "GNU GPL 2.0"
 
 -- Replace 'true' with 'false' if you want to prevent this lua from connecting to the internet
 local ENABLE_AUTOUPDATER = true
-local VERSION = "1.6.4"
+
+-- Current lua version
+local VERSION = "1.7"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
@@ -178,15 +177,20 @@ local menu = {
 
 -- Tests the run speed of a function and prints the run speed to console
 -- Use this when trying to optimize different functions
+--- @param func_name string Identifier to use when printing the speed of a function
+--- @param func function The function you want to test the speed of
+--- @param ... any The arguements for the passed function
 local function test_performance(func_name, func, ...)
     local start_time = client_timestamp()
-    for i = 1, 1000000 do
+
+    for i = 1, 1000000 do -- 1,000,000
         func(...)
     end
-    local end_time = client_timestamp()
-    local elapsed = (end_time - start_time) * 0.001 -- timestamps are given in milliseconds
 
-    printf("%s ran in %.3f seconds.", func_name, elapsed)
+    local end_time = client_timestamp()
+    local elapsed = end_time - start_time -- timestamps are given in milliseconds
+
+    printf("%s finished in %.3f milliseconds.", func_name, elapsed)
 end
 
 -- Returns true if a table contains a certain value
@@ -451,7 +455,7 @@ local function update_cond_description(condition)
     -- Go through our description. If there is not label available to set, create one
     for i,v in ipairs(lines) do
         if menu.descriptions[i] then
-            ui_set_visible(menu.descriptions[i], true)
+            ui_set_visible(menu.descriptions[i], screen == 2)
         else
             menu.descriptions[#menu.descriptions+1] = ui_new_label("AA", "Anti-aimbot angles", " ")
         end
@@ -951,9 +955,11 @@ local function on_init()
             end
         end)
     end
+
+    -- Create a global variable for other scripts to use
+    _G.condition = {}
+    condition.add = add_condition
 end
 
 -- Initiate the lua
 on_init()
-
-return add_condition
