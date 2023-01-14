@@ -6,7 +6,7 @@ local LICENSE = "GNU GPL 2.0"
 local ENABLE_AUTOUPDATER = true
 
 -- Current lua version
-local VERSION = "1.7"
+local VERSION = "1.8"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
@@ -14,12 +14,12 @@ local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers =
 local json_stringify, json_parse = json.stringify, json.parse
 local table_remove, table_insert = table.remove, table.insert
 local string_format, string_rep = string.format, string.rep
-local math_abs, math_sqrt = math.abs, math.sqrt
+local math_abs, math_sqrt, math_floor, math_ceil = math.abs, math.sqrt, math.floor, math.ceil
 local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
-local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex
+local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex, client_screen_size = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex, client.screen_size
 local database_read, database_write = database.read, database.write
-local renderer_indicator = renderer.indicator
+local renderer_text, renderer_measure_text, renderer_gradient = renderer.text, renderer.measure_text, renderer.gradient
 local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
 
 -- Libraries
@@ -90,6 +90,9 @@ local last_sim_time = 0
 local defensive_until = 0
 local last_origin = vector(0, 0, 0)
 local on_ground_ticks = 0
+
+-- Indicators data
+local sx, sy = client_screen_size()
 
 -- A list of needed menu references
 local references = {
@@ -170,8 +173,8 @@ local menu = {
     back2_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
 
     -- Other (either always visible or never visible)
-    show_active_block = ui_new_checkbox("AA", "Other", "Display active block"),
-    show_active_block_color = ui_new_color_picker("AA", "Other", "Display active block color", 255, 255, 255, 200),
+    show_active_block = ui_new_checkbox("AA", "Other", "Display blocks"),
+    show_active_block_color = ui_new_color_picker("AA", "Other", "Active block color", 158, 196, 29, 225),
     config = ui_new_string("new_aa_config", "{}"), -- if this is a blank string the config system breaks ????
 }
 
@@ -228,7 +231,7 @@ do
 
         self.name = name or "unknown"
         self.enabled = true
-        self.conditions = {}
+        self.conditions = {"Always"}
         self.cond_type = "AND"
         self.force_defensive = false
         self.settings = {
@@ -356,6 +359,12 @@ do
 
         -- For statistical use
         active_block = self
+    end
+
+    -- Returns true if the active block is itself
+    --- @return boolean boolean True if the given block is the active block
+    function Block:is_active()
+        return active_block == self
     end
 
     --- @param _ nil ignore this
@@ -737,7 +746,7 @@ local function on_player_death(e)
 end
 
 -- Calls once every frame
--- Displays the active anti-aim block if there is one
+-- Displays all anti-aim blocks, highlighting the active one
 local function on_paint()
     if not ui_get(references.enabled) or not ui_get(menu.show_active_block) then
         return
@@ -749,8 +758,29 @@ local function on_paint()
         return
     end
 
-    local r, g, b, a = ui_get(menu.show_active_block_color)
-    renderer_indicator(r, g, b, a, active_block.name)
+    local active_color = {ui_get(menu.show_active_block_color)}
+    local base_y = sy - 350 -- esoterik moment. 
+    local offset = 0
+
+    for i = #blocks, 1, -1 do
+        local r, g, b, a = unpack(blocks[i]:is_active() and active_color or {255, 255, 255, 200})
+
+        local y = base_y - offset
+        local tw, th = renderer_measure_text("rd+", blocks[i].name)
+
+        if tw % 2 == 1 then
+            tw = tw + 1
+        end
+
+        local tw2 = renderer_measure_text("rd+", "a")
+        local half = math_ceil(tw*0.5)
+
+        renderer_gradient(sx - 10 - tw, y, half, th + 4, 0, 0, 0, 0, 0, 0, 0, 50, true)
+        renderer_gradient(sx - 10 - half, y, half, th + 4, 0, 0, 0, 50, 0, 0, 0, 0, true)
+        renderer_text(sx - 20, y, r, g, b, a, "rd+", 0, blocks[i].name)
+
+        offset = offset + th + 8
+    end
 end
 
 -- Adds a custom condition to the menu
