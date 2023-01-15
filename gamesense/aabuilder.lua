@@ -759,7 +759,7 @@ local function on_paint()
     end
 
     local active_color = {ui_get(menu.show_active_block_color)}
-    local base_y = sy - 350 -- esoterik moment. 
+    local base_y = sy - 350
     local offset = 0
 
     for i = #blocks, 1, -1 do
