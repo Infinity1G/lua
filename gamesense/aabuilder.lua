@@ -6,18 +6,18 @@ local LICENSE = "GNU GPL 2.0"
 local ENABLE_AUTOUPDATER = true
 
 -- Current lua version
-local VERSION = "1.8"
+local VERSION = "1.9.0"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
 local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.curtime, globals.tickcount, globals.maxplayers
 local json_stringify, json_parse = json.stringify, json.parse
 local table_remove, table_insert = table.remove, table.insert
-local string_format, string_rep = string.format, string.rep
+local string_format, string_rep, string_gmatch = string.format, string.rep, string.gmatch
 local math_abs, math_sqrt, math_floor, math_ceil = math.abs, math.sqrt, math.floor, math.ceil
 local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
-local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex, client_screen_size = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex, client.screen_size
+local fire_event, client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex, client_screen_size = client.fire_event, client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex, client.screen_size
 local database_read, database_write = database.read, database.write
 local renderer_text, renderer_measure_text, renderer_gradient = renderer.text, renderer.measure_text, renderer.gradient
 local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
@@ -82,16 +82,17 @@ local active_block = nil
 local fatal_block = nil
 
 -- Current visible menu screen
+local last_screen = nil -- Only used for scripting event 
 local screen = 0
 
--- Condition data
+-- Condition variables
 local vulnerable_ticks = 0
 local last_sim_time = 0
 local defensive_until = 0
 local last_origin = vector(0, 0, 0)
 local on_ground_ticks = 0
 
--- Indicators data
+-- Indicator variables
 local sx, sy = client_screen_size()
 
 -- A list of needed menu references
@@ -137,7 +138,7 @@ local menu = {
     move_down_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Move down", function() end),
     delete = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Delete", function() end),
     delete_inactive = ui_new_button("AA", "Anti-aimbot angles", GRAY.. "Delete", function() end),
-    updater_label = ui_new_label("AA", "Anti-aimbot angles", "Version x.x is available."),
+    updater_label = ui_new_label("AA", "Anti-aimbot angles", "Version x.x.x is available."),
     download = ui_new_button("AA", "Anti-aimbot angles", "Download update", function() end),
     ignore = ui_new_button("AA", "Anti-aimbot angles", "Ignore", function() end),
 
@@ -145,7 +146,7 @@ local menu = {
     cond_type = ui_new_combobox("AA", "Anti-aimbot angles", "Conditions type", {"AND", "OR"}),
     cond_browser = ui_new_listbox("AA", "Anti-aimbot angles", "Conditions browser", DEFAULT_CONDITIONS),
     cond_toggle = ui_new_button("AA", "Anti-aimbot angles", "Toggle", function() end),
-    save = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
+    finish = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Finish", function() end),
     back_saved = ui_new_button("AA", "Anti-aimbot angles", GREEN.. "Back", function() end),
     back_unsaved = ui_new_button("AA", "Anti-aimbot angles", LIGHTRED.. "Back", function() end),
     descriptions = {},
@@ -194,6 +195,23 @@ local function test_performance(func_name, func, ...)
     local elapsed = end_time - start_time -- timestamps are given in milliseconds
 
     printf("%s finished in %.3f milliseconds.", func_name, elapsed)
+end
+
+-- Copies a table to a new table
+--- @param t table The table you want to copy
+--- @return table new_t A copy of the given table
+local function copy_table(t)
+    local new_t = {}
+
+    for k,v in pairs(t) do
+        if type(v) == "table" then
+            new_t[k] = copy_table(v)
+        else
+            new_t[k] = v
+        end
+    end
+
+    return new_t
 end
 
 -- Returns true if a table contains a certain value
@@ -358,7 +376,13 @@ do
         end
 
         -- For statistical use
-        active_block = self
+        if active_block ~= self then
+            active_block = self
+
+            local event_block = Block.to_block(self)
+
+            fire_event("block_antiaim_change", {name = self.name, settings = copy_table(self.settings)})
+        end
     end
 
     -- Returns true if the active block is itself
@@ -376,6 +400,14 @@ do
 
     -- Set Block_mt as a metatable for Block
     setmetatable(Block, Block_mt)
+end
+
+-- Changes the current block variariable and fires an event
+--- @param val Block|nil The value you want current_block to be
+local function update_current_block(val)
+    current_block = val
+
+    fire_event("block_current_change", current_block and current_block.name or nil)
 end
 
 -- Sets all of the given menu references to a certain visibility
@@ -449,7 +481,7 @@ local function update_cond_description(condition)
     
     -- If the description is longer than 30 characters, split it into multiple lines to help with readability
     local idx = 1
-    for s in description:gmatch("%S+") do
+    for s in string_gmatch(description, "%S+") do
         local s_ = s.. " "
         if len + #s_ <= 30 then
             lines[idx] = (lines[idx] or "").. s_
@@ -478,6 +510,8 @@ local function update_cond_description(condition)
             ui_set_visible(menu.descriptions[i], false)
         end
     end
+
+    fire_event("block_description_change", description)
 end
 
 -- Sets all of the menu settings to the current blocks settings
@@ -521,7 +555,7 @@ local function update_visibility(s)
     ui_set_visible(menu.download, screen == 0 and update_available)
     ui_set_visible(menu.ignore, screen == 0 and update_available)
 
-    set_table_visibility(screen == 2, menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.save, unpack(menu.descriptions))
+    set_table_visibility(screen == 2, menu.cond_type, menu.cond_browser, menu.cond_toggle, menu.finish, unpack(menu.descriptions))
     ui_set_visible(menu.back_saved, screen == 2 and not new_block)
     ui_set_visible(menu.back_unsaved, screen == 2 and new_block)
 
@@ -538,6 +572,11 @@ local function update_visibility(s)
     ui_set_visible(menu.back2_unsaved, screen == 1 and new_block)
 
     update_browser()
+
+    if last_screen ~= screen then
+        last_screen = screen
+        fire_event("block_screen_change", last_screen)
+    end
 end
 
 --- @return boolean boolean Returns true if the player can be hit by an enemy
@@ -811,7 +850,7 @@ end
 -- If there is no config, then create a config with a default block
 local function load_config()
     local json_cfg = ui_get(menu.config)
-    current_block = nil
+    update_current_block(nil)
     blocks = {}
     
     -- '{}' is the default and the cfg should only be {} when the lua is first loaded
@@ -845,8 +884,8 @@ local function on_init()
     end)
 
     -- Minimized because less lines of code = better
-    ui_set_callback(menu.new, function() new_block = true; current_block = Block(); update_values(); update_visibility(1) end)
-    ui_set_callback(menu.edit, function() new_block = false; current_block = blocks[ui_get(menu.browser)+1]; update_values(); update_visibility(1) end)
+    ui_set_callback(menu.new, function() new_block = true; update_current_block(Block()); update_values(); update_visibility(1) end)
+    ui_set_callback(menu.edit, function() new_block = false; update_current_block(blocks[ui_get(menu.browser)+1]); update_values(); update_visibility(1) end)
     ui_set_callback(menu.toggle, function() blocks[ui_get(menu.browser)+1].enabled = not blocks[ui_get(menu.browser)+1].enabled; update_browser() end)
     ui_set_callback(menu.delete, function() table_remove(blocks, ui_get(menu.browser)+1); update_browser(); if #blocks > 0 then ui_set(menu.browser, ui_get(menu.browser)-1) end; update_visibility(0) end)
     ui_set_callback(menu.next, function() update_visibility(2) end)
@@ -855,9 +894,9 @@ local function on_init()
     ui_set_callback(menu.yaw, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.jitter, function() if screen == 1 then update_visibility(1) end end)
     ui_set_callback(menu.body, function() if screen == 1 then update_visibility(1) end end)
-    ui_set_callback(menu.save, function() current_block:update(); if new_block then blocks[#blocks+1] = current_block end; current_block = nil; update_visibility(0) end)
-    ui_set_callback(menu.back2_saved, function() update_visibility(0) end)
-    ui_set_callback(menu.back2_unsaved, function() update_visibility(0) end)
+    ui_set_callback(menu.finish, function() current_block:update(); if new_block then blocks[#blocks+1] = current_block end; update_current_block(nil); update_visibility(0) end)
+    ui_set_callback(menu.back2_saved, function() update_current_block(nil); update_visibility(0) end)
+    ui_set_callback(menu.back2_unsaved, function() update_current_block(nil); update_visibility(0) end)
 
 
     ui_set_callback(menu.cond_toggle, function() 
@@ -906,7 +945,7 @@ local function on_init()
         end
 
         prev_browser = {idx, realtime}
-        update_visibility(false)
+        update_visibility()
     end)
 
     local prev_cond_browser = {nil, nil}
