@@ -6,7 +6,7 @@ local LICENSE = "GNU GPL 2.0"
 local ENABLE_AUTOUPDATER = true
 
 -- Current lua version
-local VERSION = "1.10.0"
+local VERSION = "1.10.1"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
@@ -909,7 +909,9 @@ end
 
 -- Saves the current block table to a menu reference
 local function save_config()
-    ui_set(menu.config, tostring(json_stringify(blocks)))
+    local save_str = tostring(json_stringify(blocks))
+    ui_set(menu.config, save_str)
+    return save_str
 end
 
 -- Loads a config from the config menu reference
@@ -1098,8 +1100,8 @@ local function on_init()
     builder.add_condition = add_condition
     builder.get_condition = get_condition
     builder.get_condition_list = get_condition_list
-    --builder.save_config = safe_global_function(save_config)
-    --builder.load_config = safe_global_function(load_config)
+    builder.save_config = function() return save_config() end
+    builder.load_config = function() return load_config() end
 
     -- Creates a block object
     --- @param name string The name of the block that appears in the menu
@@ -1117,6 +1119,11 @@ local function on_init()
     --- @return Block|nil _ The current block if there is one, nil if there isnt
     builder.get_current_block = function()
         return current_block
+    end
+
+    --- @return number ref The reference for the config ui string
+    builder.get_config_reference = function()
+        return menu.config
     end
 end
 
