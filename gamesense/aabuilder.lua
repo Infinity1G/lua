@@ -6,21 +6,21 @@ local LICENSE = "GNU GPL 2.0"
 local ENABLE_AUTOUPDATER = true
 
 -- Current lua version
-local VERSION = "1.10.1"
+local VERSION = "1.10.2"
 
 -- Cache globals for that $ performance boost $
 local ui_get, ui_set, ui_update, ui_new_color_picker, ui_new_string, ui_reference, ui_set_visible, ui_new_listbox, ui_new_button, ui_new_checkbox, ui_new_label, ui_new_combobox, ui_new_multiselect, ui_new_slider, ui_new_hotkey, ui_set_callback, ui_new_textbox = ui.get, ui.set, ui.update, ui.new_color_picker, ui.new_string, ui.reference, ui.set_visible, ui.new_listbox, ui.new_button, ui.new_checkbox, ui.new_label, ui.new_combobox, ui.new_multiselect, ui.new_slider, ui.new_hotkey, ui.set_callback, ui.new_textbox
 local globals_realtime, globals_curtime, globals_tickcount, globals_maxplayers = globals.realtime, globals.curtime, globals.tickcount, globals.maxplayers
 local json_stringify, json_parse = json.stringify, json.parse
 local unpack, table_remove, table_insert = table.unpack, table.remove, table.insert
-local string_format, string_rep, string_gmatch = string.format, string.rep, string.gmatch
+local string_format = string.format
 local math_abs, math_sqrt, math_floor, math_ceil = math.abs, math.sqrt, math.floor, math.ceil
 local bit_band, bit_lshift = bit.band, bit.lshift
 local entity_get_local_player, entity_get_player_weapon, entity_get_classname, entity_get_prop, entity_get_player_resource, entity_get_origin, entity_get_players, entity_get_esp_data, entity_get_game_rules, entity_is_enemy, entity_is_alive = entity.get_local_player, entity.get_player_weapon, entity.get_classname, entity.get_prop, entity.get_player_resource, entity.get_origin, entity.get_players, entity.get_esp_data, entity.get_game_rules, entity.is_enemy, entity.is_alive
 local client_timestamp, error_log, client_reload_active_scripts, client_set_event_callback, client_latency, client_current_threat, client_userid_to_entindex, client_screen_size = client.timestamp, client.error_log, client.reload_active_scripts, client.set_event_callback, client.latency, client.current_threat, client.userid_to_entindex, client.screen_size
 local database_read, database_write = database.read, database.write
 local renderer_text, renderer_measure_text, renderer_gradient = renderer.text, renderer.measure_text, renderer.gradient
-local select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
+local select, setmetatable, toticks, require, tonumber, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf = select, setmetatable, toticks, require, tonumber, tostring, ipairs, pairs, type, pcall, writefile, assert, print, printf
 
 -- Libraries
 local vector = require("vector")
@@ -493,7 +493,7 @@ local function update_cond_description(condition)
     
     -- If the description is longer than 30 characters, split it into multiple lines to help with readability
     local idx = 1
-    for s in string_gmatch(description, "%S+") do
+    for s in description:gmatch("%S+") do
         local s_ = s.. " "
         if len + #s_ <= 30 then
             lines[idx] = (lines[idx] or "").. s_
@@ -624,6 +624,7 @@ local function get_total_enemies()
 end
 
 -- I got help from JustiNN?id=1984 with this function. All credit goes to him
+--- @credit JustiNN - uid 1984
 --- @param local_player number The entindex of the local player
 --- @return boolean boolean Returns true if defensive dt is currently active
 local function is_defensive_active(local_player)
@@ -937,13 +938,21 @@ local function load_config()
     set_references_visibility(false)
 end
 
+-- Returns the full path to the lua
+--- @credit Flux - uid 2885
+--- @return string path The full path to the lua, including its extension
+local function get_file_path()
+    -- _ should always be false
+    local _, err = pcall(function() _G() end)
+    return _ or err:match('\\(.*):[0-9]'):gsub("\\", "/")
+end
+
 -- Calls when the lua is first loaded
 local function on_init()
     client_set_event_callback("setup_command", on_setup_command)
     client_set_event_callback("paint", on_paint)
     client_set_event_callback("pre_config_save", save_config)
     client_set_event_callback("post_config_load", load_config)
-
     client_set_event_callback("player_death", on_player_death)
 
     client_set_event_callback("shutdown", function()
@@ -1063,22 +1072,24 @@ local function on_init()
                 local cloud_version = response.body
                 cloud_version = cloud_version:gsub("\n$", "")
 
-                if cloud_version ~= VERSION then
-                    -- Ignore the update until the lua is loaded next
+                local ignored_version = database_read("new_aa_ignore_version") or nil
+                if cloud_version ~= VERSION and cloud_version ~= ignored_version then
+                    -- Ignore the update until the next update
                     ui_set_callback(menu.ignore, function()
                         update_available = false
+                        database_write("new_aa_ignore_version", cloud_version)
                         update_visibility()
                     end)
 
                     -- Overwrite the current lua with the new lua from github
-                    -- Breaks if the lua is loaded as a module from a folder :(
                     ui_set_callback(menu.download, function()
                         http.get("https://raw.githubusercontent.com/Infinity1G/lua/main/gamesense/aabuilder.lua", function(success, response)
                             if success and response.status == 200 then
+                                local path = get_file_path()
                                 local body = response.body
                                 local name = _NAME
 
-                                writefile(_NAME..".lua", body)
+                                writefile(path, body)
                                 client_reload_active_scripts()
                             end
                         end)
@@ -1086,7 +1097,7 @@ local function on_init()
 
                     -- An update is available so set the update label, download button and ignore button to visible
                     update_available = true
-                    ui_set(menu.updater_label, string_format("%sVersion %s%s%s is available to download.", LIGHTGRAY, GREEN, cloud_version, LIGHTGRAY))
+                    ui_set(menu.updater_label, format("%sVersion %s%s%s is available to download.", LIGHTGRAY, GREEN, cloud_version, LIGHTGRAY))
                     update_visibility()
                 end
             end
@@ -1124,6 +1135,26 @@ local function on_init()
     --- @return number ref The reference for the config ui string
     builder.get_config_reference = function()
         return menu.config
+    end
+
+    --- @return string norm_vers The current version of the lua, excluding extensions like 'd'
+    builder.get_version = function()
+        local norm_vers = VERSION:gsub("[^0-9.]", "")
+        return norm_vers
+    end
+
+    -- Can be used to check if the builder has been updated past a certain update
+    -- This number will only be accurate until version 99.99.99
+    --- @return number vers A numerical representation of the builders version
+    builder.get_version_number = function()
+        local norm_vers = VERSION:gsub("[^0-9.]", "")
+        local vers = ""
+
+        for str in norm_vers:gmatch("%d+") do
+            vers = vers.. format("%02.f", str)
+        end
+
+        return tonumber(vers)
     end
 end
 
